@@ -1,1 +1,0 @@
-This folder will store the ChromaDB vector database.

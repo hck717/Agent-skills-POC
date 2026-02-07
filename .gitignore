@@ -1,0 +1,19 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Vector Database (Local Storage)
+storage/
+my_financial_agent/storage/chroma_db/
+
+# OS specific files
+.DS_Store
+
+# Environment variables
+.env
