@@ -1,0 +1,1 @@
+Place your 10-K PDF files here (e.g., AAPL_10k_2024.pdf).
