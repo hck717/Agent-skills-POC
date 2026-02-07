@@ -4,7 +4,7 @@ import sys
 # Add the current directory to sys.path to ensure modules can be imported
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from skills.business_analyst.agent import BusinessAnalystAgent
+from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent as BusinessAnalystAgent
 
 def main():
     print("🚀 Starting AI Financial Agent System (Local Llama 3)...")
