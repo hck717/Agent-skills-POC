@@ -1,30 +1,31 @@
 import os
-import re
-from typing import List, Dict, Any, Optional
+import operator
+from typing import Annotated, TypedDict, Union, List
 
-# LangChain Core
+# LangChain & LangGraph
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.documents import Document
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
 
 # Document Processing
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Vector Store & Models
-from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings, ChatOllama
+# BERT Reranking
+from sentence_transformers import CrossEncoder
 
-# --- Tools with Error Handling ---
+# --- Tools Definition ---
 @tool
 def calculate_growth(current: float, previous: float) -> str:
     """
     Calculates Year-Over-Year (YoY) growth percentage.
     Args:
-        current: The value for the current period (must be a real number from filings).
+        current: The value for the current period (must be a real number).
         previous: The value for the previous period.
     """
     try:
@@ -33,8 +34,8 @@ def calculate_growth(current: float, previous: float) -> str:
         if previous == 0: return "Error: Previous value is zero."
         growth = ((current - previous) / previous) * 100
         return f"{growth:.2f}%"
-    except ValueError:
-        return "Error: Invalid inputs for calculation."
+    except:
+        return "Error: Invalid inputs."
 
 @tool
 def calculate_margin(metric: float, revenue: float) -> str:
@@ -50,33 +51,52 @@ def calculate_margin(metric: float, revenue: float) -> str:
         if revenue == 0: return "Error: Revenue is zero."
         margin = (metric / revenue) * 100
         return f"{margin:.2f}%"
-    except ValueError:
-        return "Error: Invalid inputs for calculation."
+    except:
+        return "Error: Invalid inputs."
 
-class BusinessAnalystAgent:
+# --- State Definition ---
+class AgentState(TypedDict):
+    # Messages list (Append only)
+    messages: Annotated[List[BaseMessage], operator.add]
+    # Current Ticker symbol
+    ticker: str
+    # Raw documents retrieved from Vector DB (Overwrite)
+    documents: List[Document] 
+    # Final refined text context for the LLM (Overwrite)
+    context: str
+
+class BusinessAnalystGraphAgent:
     def __init__(self, data_path="./data", db_path="./storage/chroma_db"):
         self.data_path = data_path
         self.db_path = db_path
         
-        # Models (Using Qwen 2.5 for better reasoning)
-        self.chat_model_name = "qwen2.5:7b" 
+        # Models
+        self.chat_model_name = "qwen2.5:7b"
         self.embed_model_name = "nomic-embed-text"
         
-        print(f"🔧 Initializing Institutional Agent ({self.chat_model_name})...")
-
-        # 1. Initialize LLM with Strict Temperature
-        self.llm = ChatOllama(model=self.chat_model_name, temperature=0.0) # Zero temp for max factuality
+        # Reranker Model (BERT)
+        # 用 ms-marco-MiniLM-L-6-v2 係因為佢夠快而且效果好平衡
+        self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        
+        print(f"🔧 Initializing LangGraph Agent v3.5 (BERT Enhanced)...")
+        print(f"   - Chat Model: {self.chat_model_name}")
+        print(f"   - Embedding: {self.embed_model_name}")
+        print(f"   - Reranker: {self.rerank_model_name}")
+        
+        # 1. LLM & Tools
         self.tools = [calculate_growth, calculate_margin]
+        self.llm = ChatOllama(model=self.chat_model_name, temperature=0)
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         
-        # 2. Initialize Embeddings
+        # 2. Embeddings & Vector Store
         self.embeddings = OllamaEmbeddings(model=self.embed_model_name)
-        
-        # 3. Vector Stores Cache
-        self.vectorstores = {} 
-        
-        # 4. Memory
-        self.message_history = ChatMessageHistory()
+        self.vectorstores = {}
+
+        # 3. Initialize Reranker
+        self.reranker = CrossEncoder(self.rerank_model_name)
+
+        # 4. Build the Graph
+        self.app = self._build_graph()
 
     def _get_vectorstore(self, collection_name):
         if collection_name not in self.vectorstores:
@@ -87,6 +107,151 @@ class BusinessAnalystAgent:
             )
         return self.vectorstores[collection_name]
 
+    # --- Node Functions ---
+
+    def retrieve_node(self, state: AgentState):
+        """Node 1: Broad Retrieval (High Recall)"""
+        last_msg = state["messages"][-1]
+        query = last_msg.content if isinstance(last_msg, HumanMessage) else str(last_msg)
+        
+        ticker = self._identify_ticker(query)
+        
+        if ticker == "UNKNOWN":
+            return {"documents": [], "context": "Error: Ticker not found", "ticker": "UNKNOWN"}
+            
+        print(f"🔍 [Retrieve] Vector search for {ticker} (Broad k=25)...")
+        collection_name = f"docs_{ticker}"
+        vs = self._get_vectorstore(collection_name)
+        
+        # 攞多啲文件 (k=25)，俾 Reranker 有得揀
+        retriever = vs.as_retriever(search_kwargs={"k": 25})
+        docs = retriever.invoke(query)
+        
+        # 將 Raw Documents 傳俾下一個 Node
+        return {"documents": docs, "ticker": ticker}
+
+    def rerank_node(self, state: AgentState):
+        """Node 2: BERT Reranking (High Precision)"""
+        docs = state.get("documents", [])
+        ticker = state.get("ticker", "UNKNOWN")
+        
+        # Get the original user query
+        # 注意：要搵返 User 最近嗰條 Query，唔係 System Message
+        messages = state["messages"]
+        query = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+        
+        if not docs or not query:
+            print("⚠️ [Rerank] No docs or query found to rerank.")
+            return {"context": ""}
+
+        print(f"⚖️ [Rerank] BERT scoring {len(docs)} documents against query...")
+        
+        # Prepare inputs for CrossEncoder: List of [Query, Document_Text]
+        pairs = [[query, doc.page_content] for doc in docs]
+        
+        # Predict scores (logits)
+        scores = self.reranker.predict(pairs)
+        
+        # Combine docs with scores and sort (High to Low)
+        scored_docs = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+        
+        # Select Top 5 Winners
+        top_k = 5
+        top_docs = [doc for doc, score in scored_docs[:top_k]]
+        
+        print(f"✅ [Rerank] Selected Top {len(top_docs)} most relevant chunks.")
+        
+        # Format Context String
+        context_text = "\n".join([
+            f"--- Doc: {d.metadata.get('filename')} (Page {d.metadata.get('page')}) ---\n{d.page_content}\n" 
+            for d in top_docs
+        ])
+        
+        return {"context": context_text}
+
+    def analyst_node(self, state: AgentState):
+        """Node 3: Generate Answer (Reasoning)"""
+        context = state.get("context", "")
+        ticker = state.get("ticker", "Unknown")
+        
+        if ticker == "UNKNOWN":
+            return {"messages": [AIMessage(content="❌ Please specify a valid company name (e.g., Apple, Microsoft).")]}
+            
+        if not context:
+            return {"messages": [AIMessage(content=f"⚠️ No relevant documents found for {ticker} after filtering.")]}
+
+        # Optimized Prompt
+        system_prompt = f"""You are a Senior Equity Research Analyst covering {ticker}.
+        
+        HIGHLY RELEVANT CONTEXT (Pre-filtered by BERT):
+        {context}
+        
+        YOUR MISSION:
+        1. Answer the user's question using ONLY the Context above.
+        
+        DECISION PROTOCOL:
+        - **QUALITATIVE QUESTIONS** (e.g. "Risks", "Competitors"): 
+          -> Answer directly using text from Context.
+        
+        - **QUANTITATIVE QUESTIONS** (e.g. "Calculate Margin", "Growth Rate"): 
+          -> First, FIND the exact raw numbers in Context.
+          -> Then, CALL the 'calculate_margin' or 'calculate_growth' tool.
+          -> DO NOT calculate mentally.
+          
+        MANDATORY: Cite your sources as [Page X].
+        """
+        
+        # Filter history to avoid context pollution
+        history = [m for m in state["messages"] if not isinstance(m, SystemMessage)]
+        
+        messages = [SystemMessage(content=system_prompt)] + history
+        response = self.llm_with_tools.invoke(messages)
+        return {"messages": [response]}
+
+    def _build_graph(self):
+        workflow = StateGraph(AgentState)
+        
+        # Add Nodes
+        workflow.add_node("retrieve", self.retrieve_node)
+        workflow.add_node("rerank", self.rerank_node)  # <--- 新增的獨立 Node
+        workflow.add_node("analyst", self.analyst_node)
+        workflow.add_node("tools", ToolNode(self.tools))
+        
+        # Define Edges
+        workflow.set_entry_point("retrieve")
+        workflow.add_edge("retrieve", "rerank")    # Retrieve 完去 Rerank
+        workflow.add_edge("rerank", "analyst")     # Rerank 完先去 Analyst
+        
+        # Conditional Edge (Analyst 可以 Call Tools)
+        workflow.add_conditional_edges(
+            "analyst",
+            self._should_continue,
+            {
+                "tools": "tools",
+                END: END
+            }
+        )
+        workflow.add_edge("tools", "analyst") # Tool 完返去 Analyst
+        
+        return workflow.compile()
+
+    def _should_continue(self, state: AgentState):
+        last_message = state["messages"][-1]
+        if last_message.tool_calls:
+            print(f"🛠️  [Graph] Calling Tool: {last_message.tool_calls[0]['name']}")
+            return "tools"
+        return END
+
+    def _identify_ticker(self, query: str) -> str:
+        q = query.upper()
+        if "AAPL" in q or "APPLE" in q: return "AAPL"
+        if "MSFT" in q or "MICROSOFT" in q: return "MSFT"
+        if "TSLA" in q or "TESLA" in q: return "TSLA"
+        if "NVDA" in q or "NVIDIA" in q: return "NVDA"
+        if "GOOG" in q or "GOOGLE" in q: return "GOOG"
+        return "UNKNOWN"
+
+    # --- Ingestion Logic (Unchanged) ---
     def ingest_data(self):
         print(f"📂 Scanning company folders in {self.data_path}...")
         
@@ -104,31 +269,24 @@ class BusinessAnalystAgent:
             ticker = os.path.basename(folder).upper()
             print(f"\n🏭 Processing Company: {ticker}...")
             
-            # 1. Load PDFs (Case Insensitive)
             loader_pdf_lower = DirectoryLoader(folder, glob="*.pdf", loader_cls=PyPDFLoader)
             loader_pdf_upper = DirectoryLoader(folder, glob="*.PDF", loader_cls=PyPDFLoader)
-            
-            # 2. Load Word Docs (.docx)
             loader_docx = DirectoryLoader(folder, glob="*.docx", loader_cls=Docx2txtLoader)
             
-            # Combine all
             docs = loader_pdf_lower.load() + loader_pdf_upper.load() + loader_docx.load()
             
             if not docs:
-                print(f"   ⚠️ No documents found for {ticker} (Checked .pdf, .PDF, .docx).")
+                print(f"   ⚠️ No documents found for {ticker}.")
                 continue
                 
-            # Add Rich Metadata
             for doc in docs:
                 filename = os.path.basename(doc.metadata.get('source', ''))
                 doc.metadata["ticker"] = ticker
                 doc.metadata["filename"] = filename
-                # PDF has 'page', Docx doesn't usually have reliable page numbers via this loader
                 doc.metadata["page"] = doc.metadata.get('page', 1) 
 
-            # Optimized Splitter for Tables & Financials
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1500, # Larger chunks to keep tables intact
+                chunk_size=1500, 
                 chunk_overlap=300,
                 separators=["\n\n", "\n", "Table of Contents", "."]
             )
@@ -142,110 +300,22 @@ class BusinessAnalystAgent:
             
         print("\n✅ Institutional Knowledge Base Ready!")
 
-    def _identify_ticker(self, query: str) -> str:
-        query_upper = query.upper()
-        if "APPLE" in query_upper or "AAPL" in query_upper: return "AAPL"
-        if "MICROSOFT" in query_upper or "MSFT" in query_upper: return "MSFT"
-        if "TESLA" in query_upper or "TSLA" in query_upper: return "TSLA"
-        if "NVIDIA" in query_upper or "NVDA" in query_upper: return "NVDA"
-        if "GOOGLE" in query_upper or "GOOG" in query_upper: return "GOOG"
-        return "UNKNOWN"
-
     def analyze(self, query: str) -> str:
-        # 1. Routing
-        ticker = self._identify_ticker(query)
-        context_text = ""
+        """Entry point for the graph"""
+        print(f"🤖 [Graph] Starting workflow for: '{query}'")
         
-        if ticker == "UNKNOWN":
-            return "❌ Target company not identified. Please specify the company name (e.g., Apple, Microsoft)."
-        
-        print(f"🔍 [Router] Target: {ticker}")
-        collection_name = f"docs_{ticker}"
-        vs = self._get_vectorstore(collection_name)
-        
-        # 2. Retrieval (Increased k for better recall)
-        retriever = vs.as_retriever(search_kwargs={"k": 25}) 
-        docs = retriever.invoke(query)
-        
-        if not docs:
-            return f"⚠️ No documents found for {ticker}. Did you ingest data?"
-            
-        # Format Context with Citations
-        context_text = "\n".join([
-            f"--- Document: {d.metadata.get('filename')} (Page {d.metadata.get('page')}) ---\n{d.page_content}\n" 
-            for d in docs
-        ])
-        
-        # 3. Institutional Prompt
-        system_prompt = f"""You are a Senior Equity Research Analyst covering {ticker}.
-        
-        ### MISSION
-        Answer the User Query based STRICLY on the provided Context.
-        
-        ### CRITICAL RULES (VIOLATION = FIRED)
-        1. **NO HYPOTHETICALS**: Never use "hypothetical values", "example numbers", or "assumed growth". If the specific number isn't in the text, state "Data not found in provided context".
-        2. **CITATION MANDATORY**: Every financial claim must be backed by a source. Format: [Page X].
-        3. **TOOL USAGE**: 
-           - Only call 'calculate_growth' or 'calculate_margin' if you see the EXACT raw numbers in the Context.
-           - Do not calculate if numbers are missing.
-        4. **TONE**: Professional, objective, concise. No fluff.
-
-        ### Context Data
-        {context_text}
-        """
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{input}"),
-        ])
-
-        chain = prompt | self.llm_with_tools
-        
-        # 4. Execution with Memory
-        self.message_history.add_user_message(query)
-        
-        # Thinking Indicator
-        print(f"🤖 [Analyst] Reading {len(docs)} document chunks...")
-        
-        response = chain.invoke({
-            "input": query,
-            "history": self.message_history.messages
-        })
+        inputs = {"messages": [HumanMessage(content=query)]}
         
         final_answer = ""
+        result = self.app.invoke(inputs)
         
-        # 5. Tool Loop
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            print(f"🛠️  [Tool] Agent requesting: {response.tool_calls[0]['name']}")
-            
-            for tool_call in response.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
-                
-                # Execute
-                tool_result = "Error"
-                if tool_name == "calculate_growth":
-                    tool_result = calculate_growth.invoke(tool_args)
-                elif tool_name == "calculate_margin":
-                    tool_result = calculate_margin.invoke(tool_args)
-                
-                print(f"   -> Result: {tool_result}")
-                
-                # Feed result back
-                self.message_history.add_ai_message(response)
-                self.message_history.add_message(HumanMessage(content=f"[SYSTEM] Tool '{tool_name}' output: {tool_result}. Now synthesize the final answer using this real data."))
-                
-                final_response = chain.invoke({
-                    "input": "Synthesize final report.",
-                    "history": self.message_history.messages
-                })
-                final_answer = final_response.content
+        if "messages" in result:
+            final_answer = result["messages"][-1].content
         else:
-            final_answer = response.content
+            final_answer = "Error in graph execution."
             
-        self.message_history.add_ai_message(final_answer)
         return final_answer
+
 
 if __name__ == "__main__":
     pass
