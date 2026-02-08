@@ -1,276 +1,202 @@
 import os
 import operator
-from typing import Annotated, TypedDict, Union, List
+import re
+from typing import Annotated, TypedDict, List
 
-# LangChain & LangGraph
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools import tool
-from langchain_chroma import Chroma
+# LangChain & Graph
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import OllamaEmbeddings, ChatOllama
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
-
-# Document Processing
-from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader, Docx2txtLoader
+from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader, Docx2txtLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
+from sentence_transformers import CrossEncoder
+from langgraph.graph import StateGraph, END, START
 
-# --- Tools Definition ---
-@tool
-def calculate_growth(current: float, previous: float) -> str:
-    """
-    Calculates Year-Over-Year (YoY) growth percentage.
-    Args:
-        current: The value for the current period (must be a real number).
-        previous: The value for the previous period.
-    """
-    try:
-        current = float(current)
-        previous = float(previous)
-        if previous == 0: return "Error: Previous value is zero."
-        growth = ((current - previous) / previous) * 100
-        return f"{growth:.2f}%"
-    except:
-        return "Error: Invalid inputs."
-
-@tool
-def calculate_margin(metric: float, revenue: float) -> str:
-    """
-    Calculates margin percentage.
-    Args:
-        metric: The numerator (e.g., Net Income, EBITDA).
-        revenue: The total revenue.
-    """
-    try:
-        metric = float(metric)
-        revenue = float(revenue)
-        if revenue == 0: return "Error: Revenue is zero."
-        margin = (metric / revenue) * 100
-        return f"{margin:.2f}%"
-    except:
-        return "Error: Invalid inputs."
-
-# --- State Definition ---
+# --- State ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
-    ticker: str
-    context: str
+    context: str        # The text gathered from 10-Ks
+    tickers: List[str]  # Companies identified
 
 class BusinessAnalystGraphAgent:
     def __init__(self, data_path="./data", db_path="./storage/chroma_db"):
         self.data_path = data_path
         self.db_path = db_path
         
+        print(f"🚀 Initializing STRATEGIC Analyst Agent v22.0 (Metadata Debug)...")
+        
         # Models
         self.chat_model_name = "qwen2.5:7b"
         self.embed_model_name = "nomic-embed-text"
+        self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         
-        print(f"🔧 Initializing LangGraph Agent v3.0 ({self.chat_model_name})...")
-        
-        # 1. LLM & Tools
-        self.tools = [calculate_growth, calculate_margin]
-        self.llm = ChatOllama(model=self.chat_model_name, temperature=0) # Zero temp
-        self.llm_with_tools = self.llm.bind_tools(self.tools)
-        
-        # 2. Embeddings & Vector Store
+        self.llm = ChatOllama(model=self.chat_model_name, temperature=0.1)
         self.embeddings = OllamaEmbeddings(model=self.embed_model_name)
+        self.reranker = CrossEncoder(self.rerank_model_name)
         self.vectorstores = {}
 
-        # 3. Build the Graph
         self.app = self._build_graph()
 
-    def _get_vectorstore(self, collection_name):
-        if collection_name not in self.vectorstores:
-            self.vectorstores[collection_name] = Chroma(
-                collection_name=collection_name,
-                embedding_function=self.embeddings,
-                persist_directory=self.db_path
-            )
-        return self.vectorstores[collection_name]
+    def _load_prompt(self, prompt_name):
+        try:
+            current_dir = os.getcwd()
+            path = os.path.join(current_dir, "prompts", f"{prompt_name}.md")
+            if not os.path.exists(path): return "You are a Strategic Analyst."
+            with open(path, "r") as f: return f.read()
+        except: return "You are a Strategic Analyst."
 
-    # --- Node Functions ---
+    # --- Node 1: Identification ---
+    def identify_node(self, state: AgentState):
+        messages = state['messages']
+        last_human_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+        query = last_human_msg.content.upper() if last_human_msg else ""
+        
+        found_tickers = []
+        mapping = {"APPLE": "AAPL", "MICROSOFT": "MSFT", "TESLA": "TSLA", "NVIDIA": "NVDA", "GOOGLE": "GOOGL", "AMAZON": "AMZN", "META": "META"}
+        for name, ticker in mapping.items():
+            if name in query: found_tickers.append(ticker)
+        potential_tickers = re.findall(r'\b[A-Z]{2,5}\b', query)
+        for t in potential_tickers:
+            if t in mapping.values(): found_tickers.append(t)
+        return {"tickers": list(set(found_tickers))}
 
-    def retrieve_node(self, state: AgentState):
-        """Node: Identifies Ticker and Retrieves Context"""
-        last_msg = state["messages"][-1]
-        query = last_msg.content if isinstance(last_msg, HumanMessage) else str(last_msg)
+    # --- Node 2: Strategic Research ---
+    def research_node(self, state: AgentState):
+        messages = state['messages']
+        last_human_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+        query = last_human_msg.content if last_human_msg else ""
+        tickers = state.get('tickers', [])
         
-        ticker = self._identify_ticker(query)
+        context_str = ""
         
-        if ticker == "UNKNOWN":
-            return {"context": "Error: Ticker not found", "ticker": "UNKNOWN"}
+        if not tickers: return {"context": "SYSTEM WARNING: No specific companies identified."}
+
+        for ticker in tickers:
+            print(f"🕵️ [Step 2] Reading 10-K for {ticker}...")
             
-        print(f"🔍 [Graph] Retrieving for {ticker} (k=20)...")
-        collection_name = f"docs_{ticker}"
-        vs = self._get_vectorstore(collection_name)
-        
-        # Increased k=20 for better recall
-        retriever = vs.as_retriever(search_kwargs={"k": 20})
-        docs = retriever.invoke(query)
-        
-        if not docs:
-            return {"context": "", "ticker": ticker}
-        
-        context_text = "\n".join([
-            f"--- Doc: {d.metadata.get('filename')} (Page {d.metadata.get('page')}) ---\n{d.page_content}\n" 
-            for d in docs
-        ])
-        
-        return {"context": context_text, "ticker": ticker}
+            vs = self._get_vectorstore(f"docs_{ticker}")
+            if vs._collection.count() == 0:
+                context_str += f"\n[WARNING] No documents found for {ticker}.\n"
+                continue
 
+            search_query = query
+            if "compet" in query.lower(): search_query += " competition rivals market share"
+            if "risk" in query.lower(): search_query += " risk factors regulation inflation"
+            
+            retriever = vs.as_retriever(search_kwargs={"k": 25})
+            docs = retriever.invoke(search_query)
+            
+            rag_content = "No relevant text found."
+            if docs:
+                pairs = [[query, d.page_content] for d in docs]
+                scores = self.reranker.predict(pairs)
+                top_docs = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)[:8]
+                
+                # 🟢 DEBUG PRINT: Check metadata keys
+                if top_docs:
+                    print(f"   🔍 DEBUG: Metadata sample: {top_docs[0][0].metadata}")
+
+                # 🟢 ROBUST METADATA HANDLING
+                formatted_chunks = []
+                for d, s in top_docs:
+                    source = d.metadata.get('source') or d.metadata.get('file_path') or "Unknown_File"
+                    source = os.path.basename(source)
+                    page = d.metadata.get('page') or d.metadata.get('page_number') or "N/A"
+                    formatted_chunks.append(f"--- SOURCE: {source} (Page {page}) ---\n{d.page_content}")
+                
+                rag_content = "\n\n".join(formatted_chunks)
+            
+            context_str += f"\n====== ANALYSIS CONTEXT FOR {ticker} ======\n{rag_content}\n===========================================\n"
+            
+        return {"context": context_str}
+
+    # --- Node 3: Strategic Analyst ---
     def analyst_node(self, state: AgentState):
-        """Node: Main Analyst Logic (Reasoning)"""
-        context = state.get("context", "")
-        ticker = state.get("ticker", "Unknown")
+        messages = state['messages']
+        context = state.get('context', '')
+        last_human_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+        query = last_human_msg.content.lower() if last_human_msg else ""
         
-        if ticker == "UNKNOWN":
-            return {"messages": [AIMessage(content="❌ Please specify a valid company name (e.g., Apple, Microsoft).")]}
+        if "compet" in query or "market share" in query:
+            print("🎭 [Persona] COMPETITIVE INTELLIGENCE")
+            base_prompt = self._load_prompt("competitive_intel")
+        elif "risk" in query or "threat" in query:
+            print("🎭 [Persona] CHIEF RISK OFFICER")
+            base_prompt = self._load_prompt("risk_officer")
+        else:
+            print("🎭 [Persona] CHIEF STRATEGY OFFICER")
+            base_prompt = self._load_prompt("chief_strategy_officer")
             
-        if not context:
-            return {"messages": [AIMessage(content=f"⚠️ No documents found for {ticker}. Please ensure data is ingested.")]}
-
-        # --- v3.0 OPTIMIZED PROMPT ---
-        system_prompt = f"""You are a Senior Equity Research Analyst covering {ticker}.
+        # 🟢 STRICT TEMPLATE
+        citation_instruction = """
+        ---------------------------------------------------
+        CRITICAL: ANSWER FORMATTING REQUIRED
         
-        CONTEXT FROM 10-K FILINGS:
-        {context}
+        You must structure your answer exactly like this:
         
-        YOUR MISSION:
-        1. Answer the user's question using ONLY the Context above.
+        ## [Risk/Point 1]
+        [Explanation of the point]
+        **Source:** [Filename.pdf, Page X]
         
-        DECISION PROTOCOL:
-        - **QUALITATIVE QUESTIONS** (e.g. "What are the risks?", "Who are competitors?"): 
-          -> Answer directly using text from Context. 
-          -> DO NOT use tools.
+        ## [Risk/Point 2]
+        [Explanation of the point]
+        **Source:** [Filename.pdf, Page X]
         
-        - **QUANTITATIVE QUESTIONS** (e.g. "Calculate Margin", "Growth Rate"): 
-          -> First, FIND the exact raw numbers in Context.
-          -> Then, CALL the 'calculate_margin' or 'calculate_growth' tool.
-          -> DO NOT calculate mentally.
-        
-        - **IMPOSSIBLE QUESTIONS** (e.g. "Future Stock Price", "Next Year's Revenue"):
-          -> State "I cannot predict future outcomes based on historical filings."
-          -> DO NOT guess or offer to calculate hypotheticals.
-          
-        MANDATORY: Cite your sources as [Page X].
+        Do not write general paragraphs without sources. 
+        If a specific fact comes from 'Unknown_File', label it [Source: Unknown].
+        ---------------------------------------------------
         """
         
-        # Filter out old system messages to keep context clean
-        history = [m for m in state["messages"] if not isinstance(m, SystemMessage)]
+        full_prompt = f"""{base_prompt}
         
-        messages = [SystemMessage(content=system_prompt)] + history
-        response = self.llm_with_tools.invoke(messages)
+        {citation_instruction}
+
+        ====== DOCUMENT CONTEXT ======
+        {context}
+        ==============================
+        
+        USER QUESTION: {query}
+        """
+
+        new_messages = [SystemMessage(content=full_prompt)] + messages
+        response = self.llm.invoke(new_messages)
         return {"messages": [response]}
 
     def _build_graph(self):
         workflow = StateGraph(AgentState)
-        
-        # Add Nodes
-        workflow.add_node("retrieve", self.retrieve_node)
+        workflow.add_node("identify", self.identify_node)
+        workflow.add_node("research", self.research_node)
         workflow.add_node("analyst", self.analyst_node)
-        workflow.add_node("tools", ToolNode(self.tools))
-        
-        # Define Edges
-        workflow.set_entry_point("retrieve")
-        workflow.add_edge("retrieve", "analyst")
-        
-        # Conditional Edge
-        workflow.add_conditional_edges(
-            "analyst",
-            self._should_continue,
-            {
-                "tools": "tools",
-                END: END
-            }
-        )
-        workflow.add_edge("tools", "analyst") # Loop back after tool execution
-        
+        workflow.add_edge(START, "identify")
+        workflow.add_edge("identify", "research")
+        workflow.add_edge("research", "analyst")
+        workflow.add_edge("analyst", END)
         return workflow.compile()
 
-    def _should_continue(self, state: AgentState):
-        last_message = state["messages"][-1]
-        if last_message.tool_calls:
-            print(f"🛠️  [Graph] Calling Tool: {last_message.tool_calls[0]['name']}")
-            return "tools"
-        return END
+    def _get_vectorstore(self, collection_name):
+        if collection_name not in self.vectorstores:
+            self.vectorstores[collection_name] = Chroma(collection_name=collection_name, embedding_function=self.embeddings, persist_directory=self.db_path)
+        return self.vectorstores[collection_name]
 
-    def _identify_ticker(self, query: str) -> str:
-        q = query.upper()
-        if "AAPL" in q or "APPLE" in q: return "AAPL"
-        if "MSFT" in q or "MICROSOFT" in q: return "MSFT"
-        if "TSLA" in q or "TESLA" in q: return "TSLA"
-        if "NVDA" in q or "NVIDIA" in q: return "NVDA"
-        if "GOOG" in q or "GOOGLE" in q: return "GOOG"
-        return "UNKNOWN"
-
-    # --- Ingestion Logic ---
     def ingest_data(self):
-        print(f"📂 Scanning company folders in {self.data_path}...")
-        
-        if not os.path.exists(self.data_path):
-            os.makedirs(self.data_path)
-            return
-
-        subfolders = [f.path for f in os.scandir(self.data_path) if f.is_dir()]
-        
-        if not subfolders:
-             print("❌ No company folders found inside data/.")
-             return
-
-        for folder in subfolders:
+        print(f"📂 Scanning {self.data_path}...")
+        if not os.path.exists(self.data_path): os.makedirs(self.data_path); return
+        for folder in [f.path for f in os.scandir(self.data_path) if f.is_dir()]:
             ticker = os.path.basename(folder).upper()
-            print(f"\n🏭 Processing Company: {ticker}...")
-            
-            # 1. Load PDFs (Case Insensitive)
-            loader_pdf_lower = DirectoryLoader(folder, glob="*.pdf", loader_cls=PyPDFLoader)
-            loader_pdf_upper = DirectoryLoader(folder, glob="*.PDF", loader_cls=PyPDFLoader)
-            
-            # 2. Load Word Docs (.docx)
-            loader_docx = DirectoryLoader(folder, glob="*.docx", loader_cls=Docx2txtLoader)
-            
-            # Combine all
-            docs = loader_pdf_lower.load() + loader_pdf_upper.load() + loader_docx.load()
-            
-            if not docs:
-                print(f"   ⚠️ No documents found for {ticker} (Checked .pdf, .PDF, .docx).")
-                continue
-                
-            # Add Rich Metadata
-            for doc in docs:
-                filename = os.path.basename(doc.metadata.get('source', ''))
-                doc.metadata["ticker"] = ticker
-                doc.metadata["filename"] = filename
-                doc.metadata["page"] = doc.metadata.get('page', 1) 
+            print(f"Processing {ticker}...")
+            all_docs = []
+            try: all_docs.extend(DirectoryLoader(folder, glob="**/*.pdf", loader_cls=PyPDFLoader).load())
+            except: pass
+            if not all_docs: continue
+            splits = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200).split_documents(all_docs)
+            self._get_vectorstore(f"docs_{ticker}").add_documents(splits)
+            print(f"   ✅ Indexed {len(splits)} chunks.")
 
-            # Optimized Splitter
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1500, 
-                chunk_overlap=300,
-                separators=["\n\n", "\n", "Table of Contents", "."]
-            )
-            splits = text_splitter.split_documents(docs)
-            
-            collection_name = f"docs_{ticker}"
-            print(f"   💾 Vectorizing {len(splits)} chunks into '{collection_name}'...")
-            
-            vs = self._get_vectorstore(collection_name)
-            vs.add_documents(splits)
-            
-        print("\n✅ Institutional Knowledge Base Ready!")
-
-    def analyze(self, query: str) -> str:
-        """Entry point for the graph"""
-        print(f"🤖 [Graph] Starting workflow for: '{query}'")
-        
+    def analyze(self, query: str):
+        print(f"🤖 User Query: '{query}'")
         inputs = {"messages": [HumanMessage(content=query)]}
-        
-        final_answer = ""
-        # Using invoke instead of stream for simplicity in main loop
         result = self.app.invoke(inputs)
-        
-        if "messages" in result:
-            final_answer = result["messages"][-1].content
-        else:
-            final_answer = "Error in graph execution."
-            
-        return final_answer
+        return result["messages"][-1].content
+
+if __name__ == "__main__":
+    agent = BusinessAnalystGraphAgent()

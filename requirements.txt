@@ -5,7 +5,10 @@ langchain-core
 langchain-text-splitters
 langchain-chroma
 langchain-ollama
+langchain-experimental
 pypdf
 chromadb
 sentence-transformers
 docx2txt
+pandas
+requests
