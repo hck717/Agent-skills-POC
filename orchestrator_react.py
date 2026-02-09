@@ -332,6 +332,7 @@ class ReActOrchestrator:
             for num, doc in sorted(document_sources.items())
         ])
         
+        # 🔥 ENHANCEMENT 1: Enhanced prompt for frequent citations
         prompt = f"""You are an equity research analyst synthesizing document-based analysis.
 
 USER QUERY: {user_query}
@@ -345,12 +346,40 @@ DOCUMENT REFERENCE MAP:
 INSTRUCTIONS:
 1. Synthesize a comprehensive research report
 2. Structure: Executive Summary, Detailed Analysis, Key Findings, Risk Factors, Conclusion, References
-3. CRITICAL: When citing facts, replace [SOURCE-X] with [X] (e.g., [SOURCE-1] becomes [1])
-4. DO NOT add new web-based citations - ONLY use the SOURCE citations provided
-5. End with a References section listing all [1], [2], [3]... as "[1] APPL 10-k Filings.pdf - Page 23"
-6. If no SOURCE citations are present, note that analysis is not document-backed
 
-Synthesize now:"""
+3. 🔥 CRITICAL CITATION RULES (ENHANCED):
+   - Replace [SOURCE-X] with [X] in your output (e.g., [SOURCE-1] becomes [1])
+   - CITE FREQUENTLY: Every factual claim, statistic, or risk factor MUST have a citation
+   - Multiple facts in one sentence = multiple citations
+   - Example of GOOD citation density:
+     "Apple's revenue grew 7% YoY [1], driven by iPhone sales of $201B [2]. 
+      The company faces supply chain risks in China [3] and regulatory 
+      pressures in Europe [4]."
+   - Example of BAD citation (avoid this):
+     "Apple's revenue grew, driven by iPhone sales. The company faces 
+      supply chain and regulatory risks."
+   - DO NOT make unsourced claims - if no SOURCE marker exists, note as "analyst assessment"
+   - Aim for at least 1-2 citations per paragraph
+
+4. When discussing financial metrics:
+   - Revenue figures → cite source [X]
+   - Growth rates → cite source [X]
+   - Market share → cite source [X]
+   - Margins → cite source [X]
+   - Product mix → cite source [X]
+
+5. When discussing risks:
+   - Each risk factor → cite source [X]
+   - Regulatory issues → cite source [X]
+   - Competition → cite source [X]
+   - Supply chain → cite source [X]
+
+6. End with a References section listing all citations as:
+   "[1] APPL 10-k Filings.pdf - Page 23"
+
+7. If no SOURCE citations are present in specialist analysis, note: "Analysis based on general knowledge (no document citations available)"
+
+Synthesize now with FREQUENT citations:"""
         
         try:
             messages = [{"role": "user", "content": prompt}]
