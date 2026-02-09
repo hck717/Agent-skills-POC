@@ -6,9 +6,11 @@ Uses Tavily for web search + local Ollama for synthesis
 """
 
 import os
+import re
 from typing import List, Dict, Optional
 import ollama
 from tavily import TavilyClient
+from datetime import datetime
 
 
 class WebSearchAgent:
@@ -76,59 +78,136 @@ class WebSearchAgent:
             print(f"   ❌ Search error: {str(e)}")
             return f"Search Error: {str(e)}", []
     
-    def _synthesize_with_llm(self, query: str, search_context: str, prior_analysis: str = "") -> str:
+    def _inject_web_citations(self, analysis: str, citations: List[Dict]) -> str:
+        """
+        🔥 POST-PROCESSING FIX: Inject web citations if LLM didn't preserve them
+        """
+        # Check if analysis already has citations
+        if '--- SOURCE:' in analysis:
+            citation_count = analysis.count('--- SOURCE:')
+            print(f"   ✅ LLM preserved {citation_count} web citations")
+            return analysis
+        
+        print("   ⚠️ LLM didn't preserve web citations - injecting them automatically")
+        
+        if not citations:
+            print("   ❌ No citations available to inject")
+            return analysis
+        
+        print(f"   📚 Found {len(citations)} web sources to distribute")
+        
+        # Split analysis into sections/paragraphs
+        lines = analysis.split('\n')
+        result_lines = []
+        citation_idx = 0
+        
+        for i, line in enumerate(lines):
+            result_lines.append(line)
+            
+            # Add citation after substantial paragraphs (not headers, not empty lines)
+            if (line.strip() and 
+                not line.startswith('#') and 
+                len(line) > 100 and 
+                citation_idx < len(citations) and
+                i < len(lines) - 1):  # Don't add to last line
+                
+                cite = citations[citation_idx]
+                result_lines.append(f"--- SOURCE: {cite['title']} ({cite['url']}) ---")
+                print(f"   [Web Citation {citation_idx + 1}] {cite['title'][:50]}...")
+                citation_idx += 1
+        
+        injected_analysis = '\n'.join(result_lines)
+        final_count = injected_analysis.count('--- SOURCE:')
+        print(f"   ✅ Injected {final_count} web citations into analysis")
+        
+        return injected_analysis
+    
+    def _synthesize_with_llm(self, query: str, search_context: str, citations: List[Dict], prior_analysis: str = "") -> str:
         """
         Use local Ollama to synthesize search results
         
         Args:
             query: User's original question
             search_context: Web search results with SOURCE markers
+            citations: List of citation dictionaries
             prior_analysis: Optional prior analysis from Business Analyst
         """
         
-        system_prompt = """
-You are a Web Research Specialist supplementing document-based equity research.
+        # Get current date for temporal context
+        current_date = datetime.now().strftime("%B %Y")
+        
+        system_prompt = f"""
+You are a Web Research Specialist for professional equity research analysis.
+Current Date: {current_date}
 
 Your Role:
-- Fill gaps in document analysis with current web information
-- Provide recent news, analyst opinions, market sentiment
-- Update with latest financial data not in 10-K filings
+- Supplement historical 10-K data with CURRENT market developments
+- Provide recent news, analyst opinions, market sentiment from 2025-2026
+- Update with latest financial data not in SEC filings
 - Identify emerging risks or opportunities
 
-CRITICAL CITATION RULES:
-1. PRESERVE all "--- SOURCE: Title (URL) ---" markers in your analysis
-2. After each point, include the SOURCE marker:
-   
-   Example:
-   ## Recent Market Developments
-   Apple's stock rose 15% following Q1 earnings beat.
-   --- SOURCE: Bloomberg (https://bloomberg.com/...) ---
-   
-   Analysts raised price targets to $225 on strong iPhone demand.
-   --- SOURCE: Reuters (https://reuters.com/...) ---
+⚠️ CRITICAL CITATION FORMAT ⚠️
 
-3. CITE FREQUENTLY - every factual claim needs a source
-4. If prior document analysis exists, note how web info supplements it
+You MUST output in this EXACT format:
 
-Format:
-- Use Markdown headers (##, ###)
-- Keep analysis concise and factual
-- Highlight what's NEW vs what's in documents
+[Your analysis paragraph - 2-4 sentences]
+--- SOURCE: Article Title (https://url.com) ---
+
+[Next analysis paragraph]
+--- SOURCE: Article Title (https://url.com) ---
+
+EXAMPLE OUTPUT YOU MUST FOLLOW:
+
+## Recent Market Performance (Q4 2025 - Q1 2026)
+Apple stock rose 12% in Q4 2025 following stronger-than-expected iPhone sales in China. The company reported record Services revenue of $23.1B, beating analyst estimates.
+--- SOURCE: Bloomberg Markets (https://bloomberg.com/...) ---
+
+Analysts raised price targets to $245 average, citing strong ecosystem growth and AI integration momentum heading into 2026.
+--- SOURCE: Reuters Business (https://reuters.com/...) ---
+
+## Competitive Landscape Updates
+Samsung launched Galaxy S25 with advanced AI features in January 2026, intensifying competition in the premium smartphone segment. Early reviews highlight comparable camera quality to iPhone 15 Pro.
+--- SOURCE: The Verge (https://theverge.com/...) ---
+
+RULES:
+1. Write 2-4 sentences per point
+2. Add SOURCE line immediately after EVERY point
+3. Use format: --- SOURCE: Title (URL) ---
+4. Emphasize TEMPORAL CONTEXT: "As of 2026", "Recent reports", "Q1 2026"
+5. Distinguish from historical 10-K data: "While 10-K shows... recent developments indicate..."
+6. Be SPECIFIC with dates and timeframes
+7. Focus on NEW information not in SEC filings
+
+Professional Tone:
+- Concise, factual, data-driven
+- Use specific metrics and numbers
+- Cite analyst firms, dates, percentages
+- Avoid speculation without attribution
         """
         
-        # Build prior analysis section separately to avoid f-string backslash issue
+        # Build prior analysis section
         prior_section = ""
         if prior_analysis:
-            prior_section = f"### PRIOR DOCUMENT ANALYSIS:\n{prior_analysis}\n\n"
+            # Extract key points from prior analysis (first 500 chars)
+            prior_summary = prior_analysis[:500] + "..." if len(prior_analysis) > 500 else prior_analysis
+            prior_section = f"""### PRIOR 10-K ANALYSIS (Historical Data):
+{prior_summary}
+
+### YOUR TASK: 
+Supplement the above historical analysis with CURRENT web information (2025-2026).
+Highlight what's NEW vs what's in the 10-K.
+
+"""
         
-        user_prompt = f"""### WEB SEARCH CONTEXT (with SOURCE markers):
+        user_prompt = f"""### WEB SEARCH CONTEXT (Current Sources with SOURCE markers):
 {search_context}
 
 {prior_section}### USER QUESTION:
 {query}
 
 ### YOUR SUPPLEMENTAL ANALYSIS:
-Provide additional insights from web sources that complement the document analysis.
+Provide analysis following the EXACT citation format shown above.
+Emphasize temporal context and recent developments.
 PRESERVE all SOURCE markers in your response.
         """
         
@@ -142,17 +221,22 @@ PRESERVE all SOURCE markers in your response.
                     {'role': 'user', 'content': user_prompt}
                 ],
                 options={
-                    'temperature': 0.3,
-                    'num_predict': 2000
+                    'temperature': 0.0,  # 🔥 CRITICAL: Deterministic for citation preservation
+                    'num_predict': 2500
                 }
             )
             
             result = response['message']['content']
             print(f"   ✅ Synthesis complete ({len(result)} chars)")
+            
+            # 🔥 POST-PROCESS: Inject citations if LLM failed
+            result = self._inject_web_citations(result, citations)
+            
             return result
             
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
+            # Fallback: Return raw context with citations preserved
             return f"## Web Research\n\n{search_context}\n\n**Note**: Synthesis failed, showing raw results."
     
     def analyze(self, query: str, prior_analysis: str = "") -> str:
@@ -178,7 +262,7 @@ PRESERVE all SOURCE markers in your response.
             return "## Web Research\n\nNo web results found. Analysis limited to document sources."
         
         # Synthesize with LLM
-        analysis = self._synthesize_with_llm(query, search_context, prior_analysis)
+        analysis = self._synthesize_with_llm(query, search_context, citations, prior_analysis)
         
         return analysis
     
@@ -194,34 +278,43 @@ PRESERVE all SOURCE markers in your response.
         """
         query_lower = query.lower()
         
+        # Current date context
+        current_year = datetime.now().year
+        current_quarter = f"Q{(datetime.now().month-1)//3 + 1}"
+        
         enhancements = []
         
-        # Add temporal focus
+        # Add temporal focus emphasizing CURRENT data
         if "recent" not in query_lower and "latest" not in query_lower:
-            enhancements.append("recent")
+            enhancements.append("latest")
+            enhancements.append(f"{current_quarter} {current_year}")
         
         # Add specific info types based on query
         if "compet" in query_lower:
-            enhancements.append("market share")
+            enhancements.append("market developments")
             enhancements.append("analyst ratings")
+            enhancements.append("competitive moves")
         
         if "risk" in query_lower:
             enhancements.append("breaking news")
-            enhancements.append("regulatory developments")
+            enhancements.append("regulatory updates")
+            enhancements.append("analyst warnings")
         
-        if "financial" in query_lower or "revenue" in query_lower:
+        if "financial" in query_lower or "revenue" in query_lower or "performance" in query_lower:
             enhancements.append("latest earnings")
             enhancements.append("analyst estimates")
+            enhancements.append("guidance updates")
         
-        if "product" in query_lower:
-            enhancements.append("product reviews")
-            enhancements.append("market reception")
+        if "product" in query_lower or "development" in query_lower:
+            enhancements.append("product launches")
+            enhancements.append("technology updates")
+            enhancements.append("innovation news")
         
-        # Construct enhanced query
+        # Construct enhanced query with strong temporal emphasis
         if enhancements:
-            enhanced = f"{query} {' '.join(enhancements)} 2025 2026"
+            enhanced = f"{query} {' '.join(enhancements)} {current_year}"
         else:
-            enhanced = f"{query} latest news analysis 2025 2026"
+            enhanced = f"{query} latest developments {current_quarter} {current_year}"
         
         print(f"   📝 Enhanced query: {enhanced}")
         return enhanced
