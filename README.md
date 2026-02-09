@@ -12,6 +12,12 @@
 ### Option 1: Streamlit UI (Recommended)
 
 ```bash
+# Create virtual environment with Python 3.11
+python3.11 -m venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate
+
 # 1. Install
 pip install -r requirements.txt
 
