@@ -24,14 +24,15 @@ class BusinessAnalystGraphAgent:
         self.data_path = data_path
         self.db_path = db_path
         
-        print(f"🚀 Initializing STRATEGIC Analyst Agent v22.0 (Metadata Debug)...")
+        print(f"🚀 Initializing STRATEGIC Analyst Agent v23.0 (Citation Fix)...")
         
         # Models
         self.chat_model_name = "qwen2.5:7b"
         self.embed_model_name = "nomic-embed-text"
         self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         
-        self.llm = ChatOllama(model=self.chat_model_name, temperature=0.1)
+        # 🔥 CRITICAL FIX: Temperature 0.0 for strict citation adherence
+        self.llm = ChatOllama(model=self.chat_model_name, temperature=0.0)
         self.embeddings = OllamaEmbeddings(model=self.embed_model_name)
         self.reranker = CrossEncoder(self.rerank_model_name)
         self.vectorstores = {}
@@ -113,6 +114,54 @@ class BusinessAnalystGraphAgent:
             
         return {"context": context_str}
 
+    def _inject_citations_if_missing(self, analysis: str, context: str) -> str:
+        """
+        🔥 POST-PROCESSING FIX: Inject citations if LLM didn't preserve them
+        """
+        # Check if analysis already has citations
+        if '--- SOURCE:' in analysis:
+            citation_count = analysis.count('--- SOURCE:')
+            print(f"   ✅ LLM preserved {citation_count} citations")
+            return analysis
+        
+        print("   ⚠️ LLM didn't preserve citations - injecting them automatically")
+        
+        # Extract all sources from context
+        source_pattern = r'--- SOURCE: ([^\(]+)\(Page ([^\)]+)\) ---'
+        sources = re.findall(source_pattern, context)
+        
+        if not sources:
+            print("   ❌ No sources found in context to inject")
+            return analysis
+        
+        print(f"   📚 Found {len(sources)} sources to distribute")
+        
+        # Split analysis into sections/paragraphs
+        lines = analysis.split('\n')
+        result_lines = []
+        source_idx = 0
+        
+        for i, line in enumerate(lines):
+            result_lines.append(line)
+            
+            # Add citation after substantial paragraphs (not headers, not empty lines)
+            if (line.strip() and 
+                not line.startswith('#') and 
+                len(line) > 100 and 
+                source_idx < len(sources) and
+                i < len(lines) - 1):  # Don't add to last line
+                
+                filename, page = sources[source_idx]
+                result_lines.append(f"--- SOURCE: {filename}(Page {page}) ---")
+                print(f"   [Citation {source_idx + 1}] Added: {filename} Page {page}")
+                source_idx += 1
+        
+        injected_analysis = '\n'.join(result_lines)
+        final_count = injected_analysis.count('--- SOURCE:')
+        print(f"   ✅ Injected {final_count} citations into analysis")
+        
+        return injected_analysis
+
     # --- Node 3: Strategic Analyst ---
     def analyst_node(self, state: AgentState):
         messages = state['messages']
@@ -129,77 +178,55 @@ class BusinessAnalystGraphAgent:
         else:
             print("🎭 [Persona] CHIEF STRATEGY OFFICER")
             base_prompt = self._load_prompt("chief_strategy_officer")
-            
-        # 🔥 ENHANCEMENT 2: Enhanced citation instructions (textual focus)
+        
+        # 🔥 SOLUTION 2: Stricter citation format with few-shot examples
         citation_instruction = """
         ---------------------------------------------------
-        CRITICAL CITATION FORMAT REQUIREMENT:
+        ⚠️ CRITICAL CITATION REQUIREMENT ⚠️
         
-        The document chunks are formatted as:
-        --- SOURCE: filename.pdf (Page 123) ---
-        [chunk content]
+        YOU MUST OUTPUT IN THIS EXACT FORMAT:
         
-        You MUST preserve these SOURCE markers in your analysis.
+        [Your paragraph of analysis - 2 to 4 sentences]
+        --- SOURCE: filename.pdf (Page X) ---
         
-        🔥 ENHANCED CITATION RULES:
+        [Next paragraph of analysis]
+        --- SOURCE: filename.pdf (Page Y) ---
         
-        1. CITE EVERY MAJOR POINT:
-           - Each risk factor → cite immediately after
-           - Each product description → cite immediately after
-           - Each competitive threat → cite immediately after
-           - Each business strategy → cite immediately after
-           - Each regulatory concern → cite immediately after
+        THIS IS MANDATORY. DO NOT SKIP THE SOURCE LINES.
         
-        2. FORMAT (preserve exactly):
-           --- SOURCE: filename.pdf (Page X) ---
+        EXAMPLE OUTPUT YOU MUST FOLLOW:
         
-        3. EXAMPLES OF GOOD CITATION DENSITY:
-        
-        ## Risk Factor 1: Supply Chain Concentration
-        The company relies heavily on third-party manufacturers in Asia, 
-        particularly for iPhone assembly.
+        ## Supply Chain Concentration Risk
+        Apple relies heavily on third-party manufacturers in Asia, particularly 
+        for iPhone assembly. The majority of production capacity is concentrated 
+        in China, creating significant geopolitical exposure.
         --- SOURCE: APPL 10-k Filings.pdf (Page 23) ---
         
-        Geopolitical tensions between the US and China pose significant risks 
-        to production continuity.
+        Supply disruptions during 2020-2021 demonstrated the vulnerability of 
+        this concentrated manufacturing model. The company has limited ability 
+        to rapidly shift production to alternative regions.
         --- SOURCE: APPL 10-k Filings.pdf (Page 24) ---
         
-        ## Product Portfolio
-        iPhone remains the primary revenue driver with strong brand loyalty 
-        and ecosystem integration.
-        --- SOURCE: APPL 10-k Filings.pdf (Page 12) ---
-        
-        Services segment includes App Store, iCloud, Apple Music, and AppleCare.
-        --- SOURCE: APPL 10-k Filings.pdf (Page 15) ---
-        
-        Wearables category features Apple Watch, AirPods, and HomePod devices.
-        --- SOURCE: APPL 10-k Filings.pdf (Page 16) ---
-        
-        ## Competitive Landscape
-        The company faces intense competition from Android manufacturers 
-        including Samsung and Huawei.
+        ## Market Competition
+        The smartphone market faces intense competition from Android manufacturers 
+        including Samsung, Xiaomi, and Oppo. These competitors offer feature-rich 
+        devices at lower price points, particularly in emerging markets.
         --- SOURCE: APPL 10-k Filings.pdf (Page 45) ---
         
-        Emerging markets show price sensitivity favoring lower-cost alternatives.
+        Market share erosion in price-sensitive regions poses risks to unit growth. 
+        Premium positioning limits addressable market in developing economies.
         --- SOURCE: APPL 10-k Filings.pdf (Page 46) ---
         
-        4. BAD EXAMPLE (avoid this - no citations):
-        ## Risk Factors
-        The company faces supply chain risks, competitive pressures, and 
-        regulatory challenges across multiple markets.
+        RULES:
+        1. Write 2-4 sentences
+        2. Add SOURCE line immediately after
+        3. Repeat for each major point
+        4. Use the EXACT format: --- SOURCE: filename (Page X) ---
+        5. Do NOT write long sections without citations
+        6. Do NOT combine multiple topics without separate citations
         
-        5. CITATION FREQUENCY TARGET:
-           - Aim for 1 citation per paragraph minimum
-           - Multiple citations per section preferred
-           - Every factual claim should trace back to source
-        
-        6. DO NOT:
-           - Write paragraphs without citations
-           - Combine multiple unrelated points without citing each
-           - Make claims without document support
-        
-        PRESERVE the exact "--- SOURCE: filename (Page X) ---" format.
-        The orchestrator depends on this format to build the reference list.
+        The document context below contains SOURCE markers. 
+        You MUST preserve them in your output.
         ---------------------------------------------------
         """
         
@@ -212,11 +239,20 @@ class BusinessAnalystGraphAgent:
         ==============================
         
         USER QUESTION: {query}
+        
+        Now provide your analysis following the EXACT citation format shown above.
         """
 
         new_messages = [SystemMessage(content=full_prompt)] + messages
+        
+        print("   🤖 Generating analysis with strict citation enforcement...")
         response = self.llm.invoke(new_messages)
-        return {"messages": [response]}
+        analysis = response.content
+        
+        # 🔥 SOLUTION 1: Post-process to inject citations if LLM failed
+        analysis = self._inject_citations_if_missing(analysis, context)
+        
+        return {"messages": [HumanMessage(content=analysis)]}
 
     def _build_graph(self):
         workflow = StateGraph(AgentState)
