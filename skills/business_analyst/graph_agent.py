@@ -83,6 +83,7 @@ class BusinessAnalystGraphAgent:
             search_query = query
             if "compet" in query.lower(): search_query += " competition rivals market share"
             if "risk" in query.lower(): search_query += " risk factors regulation inflation"
+            if "product" in query.lower(): search_query += " products services offerings"
             
             retriever = vs.as_retriever(search_kwargs={"k": 25})
             docs = retriever.invoke(search_query)
@@ -129,7 +130,7 @@ class BusinessAnalystGraphAgent:
             print("🎭 [Persona] CHIEF STRATEGY OFFICER")
             base_prompt = self._load_prompt("chief_strategy_officer")
             
-        # 🟢 CRITICAL: Tell LLM to preserve SOURCE markers
+        # 🔥 ENHANCEMENT 2: Enhanced citation instructions (textual focus)
         citation_instruction = """
         ---------------------------------------------------
         CRITICAL CITATION FORMAT REQUIREMENT:
@@ -140,19 +141,65 @@ class BusinessAnalystGraphAgent:
         
         You MUST preserve these SOURCE markers in your analysis.
         
-        For EVERY point you make, include the SOURCE marker immediately after:
+        🔥 ENHANCED CITATION RULES:
         
-        Example:
-        ## Competitive Risk 1: Market Share Decline
-        Apple faces declining market share in China with 15% YoY decrease.
+        1. CITE EVERY MAJOR POINT:
+           - Each risk factor → cite immediately after
+           - Each product description → cite immediately after
+           - Each competitive threat → cite immediately after
+           - Each business strategy → cite immediately after
+           - Each regulatory concern → cite immediately after
+        
+        2. FORMAT (preserve exactly):
+           --- SOURCE: filename.pdf (Page X) ---
+        
+        3. EXAMPLES OF GOOD CITATION DENSITY:
+        
+        ## Risk Factor 1: Supply Chain Concentration
+        The company relies heavily on third-party manufacturers in Asia, 
+        particularly for iPhone assembly.
         --- SOURCE: APPL 10-k Filings.pdf (Page 23) ---
         
-        ## Competitive Risk 2: Pricing Pressure
-        Premium pricing strategy limits addressable market.
+        Geopolitical tensions between the US and China pose significant risks 
+        to production continuity.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 24) ---
+        
+        ## Product Portfolio
+        iPhone remains the primary revenue driver with strong brand loyalty 
+        and ecosystem integration.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 12) ---
+        
+        Services segment includes App Store, iCloud, Apple Music, and AppleCare.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 15) ---
+        
+        Wearables category features Apple Watch, AirPods, and HomePod devices.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 16) ---
+        
+        ## Competitive Landscape
+        The company faces intense competition from Android manufacturers 
+        including Samsung and Huawei.
         --- SOURCE: APPL 10-k Filings.pdf (Page 45) ---
         
-        DO NOT write analysis without citing sources.
+        Emerging markets show price sensitivity favoring lower-cost alternatives.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 46) ---
+        
+        4. BAD EXAMPLE (avoid this - no citations):
+        ## Risk Factors
+        The company faces supply chain risks, competitive pressures, and 
+        regulatory challenges across multiple markets.
+        
+        5. CITATION FREQUENCY TARGET:
+           - Aim for 1 citation per paragraph minimum
+           - Multiple citations per section preferred
+           - Every factual claim should trace back to source
+        
+        6. DO NOT:
+           - Write paragraphs without citations
+           - Combine multiple unrelated points without citing each
+           - Make claims without document support
+        
         PRESERVE the exact "--- SOURCE: filename (Page X) ---" format.
+        The orchestrator depends on this format to build the reference list.
         ---------------------------------------------------
         """
         
