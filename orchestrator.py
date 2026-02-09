@@ -88,18 +88,89 @@ class PlannerAgent:
         }
     }
     
-    def __init__(self, perplexity_client: PerplexityClient):
+    def __init__(self, perplexity_client: PerplexityClient, use_detailed_specs: bool = True):
         self.client = perplexity_client
+        self.use_detailed_specs = use_detailed_specs
+        self.detailed_specs = self._load_detailed_specs() if use_detailed_specs else None
+    
+    def _load_detailed_specs(self) -> str:
+        """Load detailed agent specifications from SPECIALIST_AGENTS.md"""
+        try:
+            spec_path = os.path.join(os.getcwd(), "SPECIALIST_AGENTS.md")
+            if os.path.exists(spec_path):
+                with open(spec_path, 'r') as f:
+                    content = f.read()
+                    print("📚 Loaded detailed agent specifications for enhanced planning")
+                    return content
+        except Exception as e:
+            print(f"⚠️  Could not load SPECIALIST_AGENTS.md: {e}")
+        return None
     
     def create_planning_prompt(self, user_query: str, available_agents: List[str]) -> str:
         """Generate the planning prompt for agent selection"""
-        agents_info = "\n".join([
-            f"- {name}: {info['description']}\n  Capabilities: {', '.join(info['capabilities'])}"
-            for name, info in self.SPECIALIST_AGENTS.items()
-            if name in available_agents
-        ])
         
-        prompt = f"""You are an AI Research Orchestrator for equity research. Your role is to analyze user queries and determine which specialist agents should be deployed to provide comprehensive analysis.
+        # Use detailed specs if available, otherwise use basic descriptions
+        if self.detailed_specs:
+            # Extract relevant sections for available agents only
+            agent_context = "\n".join([
+                f"- {name}: {info['description']}"
+                for name, info in self.SPECIALIST_AGENTS.items()
+                if name in available_agents
+            ])
+            
+            prompt = f"""You are an AI Research Orchestrator for equity research. Your role is to analyze user queries and determine which specialist agents should be deployed to provide comprehensive analysis.
+
+REFERENCE: Detailed specialist agent specifications are available in SPECIALIST_AGENTS.md.
+Key decision criteria:
+- Business Analyst: Best for 10-K/10-Q filings, competitive analysis, risk factors
+- Quantitative Analyst: Best for calculations, ratios, valuation models, trend analysis
+- Market Analyst: Best for sentiment, technical indicators, current market data
+- Industry Analyst: Best for sector trends, peer benchmarking, regulatory landscape
+- ESG Analyst: Best for sustainability, governance, environmental impact
+- Macro Analyst: Best for economic factors, interest rates, geopolitical risks
+
+AVAILABLE SPECIALIST AGENTS:
+{agent_context}
+
+USER QUERY:
+{user_query}
+
+TASK:
+1. Analyze the user's query keywords and intent
+2. Select 1-4 most relevant specialist agents based on:
+   - Core capabilities match
+   - Data source requirements
+   - Query complexity
+3. Define specific, actionable tasks for each selected agent
+4. Prioritize agents (1=highest priority, execute first)
+
+SELECTION GUIDELINES:
+- Use 1 agent for focused, single-domain queries
+- Use 2-3 agents when combining qualitative + quantitative analysis
+- Use 3-4 agents for comprehensive research requiring multiple perspectives
+
+RESPOND IN THIS JSON FORMAT ONLY:
+{{
+  "reasoning": "Brief explanation of agent selection strategy and why these agents fit the query",
+  "selected_agents": [
+    {{
+      "agent_name": "business_analyst",
+      "task_description": "Specific task for this agent",
+      "priority": 1
+    }}
+  ]
+}}
+
+Provide only valid JSON without any markdown formatting or additional text."""
+        else:
+            # Fallback to basic descriptions
+            agents_info = "\n".join([
+                f"- {name}: {info['description']}\n  Capabilities: {', '.join(info['capabilities'])}"
+                for name, info in self.SPECIALIST_AGENTS.items()
+                if name in available_agents
+            ])
+            
+            prompt = f"""You are an AI Research Orchestrator for equity research. Your role is to analyze user queries and determine which specialist agents should be deployed to provide comprehensive analysis.
 
 AVAILABLE SPECIALIST AGENTS:
 {agents_info}
@@ -126,6 +197,7 @@ RESPOND IN THIS JSON FORMAT ONLY:
 }}
 
 Provide only valid JSON without any markdown formatting or additional text."""
+        
         return prompt
     
     def plan(self, user_query: str, available_agents: List[str] = None) -> List[AgentTask]:
@@ -253,9 +325,9 @@ Provide a professional, well-structured equity research report."""
 class EquityResearchOrchestrator:
     """Main orchestrator coordinating planner, specialist agents, and synthesis"""
     
-    def __init__(self, perplexity_api_key: str = None):
+    def __init__(self, perplexity_api_key: str = None, use_detailed_specs: bool = True):
         self.perplexity = PerplexityClient(perplexity_api_key)
-        self.planner = PlannerAgent(self.perplexity)
+        self.planner = PlannerAgent(self.perplexity, use_detailed_specs=use_detailed_specs)
         self.synthesizer = SynthesisAgent(self.perplexity)
         
         # Registry of available specialist agents
