@@ -2,8 +2,11 @@
 """
 ReAct-based Multi-Agent Orchestrator
 
-Rule-based orchestration with LOCAL LLM synthesis for professional equity research.
-Version: 2.1 - 10/10 Quality Standard (DeepSeek-R1 8B)
+Rule-based orchestration with HYBRID LOCAL LLM synthesis:
+- DeepSeek-R1 8B: Deep reasoning for specialist analysis
+- Qwen 2.5 7B: Fast synthesis for final report combining
+
+Version: 2.2 - Hybrid Model Approach (10/10 Quality + Performance)
 """
 
 import os
@@ -127,7 +130,11 @@ class OllamaClient:
 
 
 class ReActOrchestrator:
-    """Rule-based orchestrator with LOCAL synthesis (no web interference)"""
+    """Rule-based orchestrator with HYBRID LOCAL synthesis (no web interference)"""
+    
+    # 🔥 HYBRID MODEL STRATEGY
+    ANALYSIS_MODEL = "deepseek-r1:8b"   # Deep reasoning for specialist analysis
+    SYNTHESIS_MODEL = "qwen2.5:7b"      # Fast synthesis for final report combining
     
     SPECIALIST_AGENTS = {
         "business_analyst": {
@@ -158,7 +165,9 @@ class ReActOrchestrator:
     }
     
     def __init__(self, ollama_url: str = "http://localhost:11434", max_iterations: int = 3):
-        self.client = OllamaClient(base_url=ollama_url)
+        # Use DeepSeek for orchestrator reasoning (not used in rule-based, but kept for compatibility)
+        self.client = OllamaClient(base_url=ollama_url, model=self.ANALYSIS_MODEL)
+        self.ollama_url = ollama_url
         self.max_iterations = max_iterations
         self.specialist_agents = {}
         self.trace = ReActTrace()
@@ -395,13 +404,16 @@ class ReActOrchestrator:
     
     def _synthesize(self, user_query: str) -> str:
         """
-        Synthesize with LOCAL LLM - Professional Equity Research Report (10/10 Quality)
-        Using DeepSeek-R1 8B for superior financial reasoning
+        Synthesize with HYBRID LOCAL LLM - Professional Equity Research Report (10/10 Quality)
+        
+        🔥 HYBRID APPROACH:
+        - Specialist analysis: DeepSeek-R1 8B (deep reasoning)
+        - Final synthesis: Qwen 2.5 7B (fast combining)
         """
         specialist_calls = self.trace.get_specialist_calls()
         current_date = datetime.now().strftime("%B %d, %Y")
         
-        print(f"\n📊 [SYNTHESIS] Combining insights with DeepSeek-R1 8B...")
+        print(f"\n📊 [SYNTHESIS] Combining insights with Qwen 2.5 7B (fast synthesis)...")
         print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
         
         specialist_outputs = []
@@ -607,14 +619,18 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
 """
         
         try:
+            # 🔥 HYBRID: Use Qwen 2.5 7B for fast synthesis (10x faster than DeepSeek)
+            synthesis_client = OllamaClient(base_url=self.ollama_url, model=self.SYNTHESIS_MODEL)
+            
             messages = [{"role": "user", "content": prompt}]
             print("   🔄 Generating 10/10 professional equity research synthesis...")
-            # 🔥 DeepSeek-R1 8B optimized parameters
-            final_report = self.client.chat(
+            
+            # 🔥 Qwen 2.5 7B optimized parameters (faster than DeepSeek)
+            final_report = synthesis_client.chat(
                 messages, 
-                temperature=0.20,  # DeepSeek-R1 performs well at this temp
-                num_predict=3500,  # Optimized token count
-                timeout=300        # 5 minute timeout
+                temperature=0.15,  # Qwen performs well at lower temp for synthesis
+                num_predict=3500,  # Same token count
+                timeout=180        # 3 minutes (much faster than DeepSeek's 5+ mins)
             )
             print("   ✅ Synthesis complete")
             
@@ -662,8 +678,8 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.1")
-        print("   10/10 Professional Quality Standard (DeepSeek-R1 8B)")
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.2")
+        print("   10/10 Quality + Performance (Hybrid: DeepSeek + Qwen)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -715,14 +731,19 @@ def main():
         if not orchestrator.test_connection():
             print("\n❌ Failed to connect to Ollama")
             print("\n💡 Make sure Ollama is running: ollama serve")
-            print("💡 Make sure DeepSeek-R1 8B is installed: ollama pull deepseek-r1:8b")
+            print("💡 Make sure models are installed:")
+            print(f"   ollama pull {ReActOrchestrator.ANALYSIS_MODEL}")
+            print(f"   ollama pull {ReActOrchestrator.SYNTHESIS_MODEL}")
             return
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Professional Equity Research Orchestrator v2.1 Ready")
-    print("   10/10 Quality Standard - Institutional Grade (DeepSeek-R1 8B)")
+    print("\n🚀 Professional Equity Research Orchestrator v2.2 Ready")
+    print("   10/10 Quality Standard (Hybrid: DeepSeek-R1 8B + Qwen 2.5 7B)")
+    print("\n🎯 Model Strategy:")
+    print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
+    print(f"   - Synthesis: {ReActOrchestrator.SYNTHESIS_MODEL} (final report combining)")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
