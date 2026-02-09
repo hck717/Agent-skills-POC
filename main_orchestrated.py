@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Orchestrated Multi-Agent Equity Research System
+ReAct-Based Multi-Agent Equity Research System
 
-This script demonstrates the full multi-agent orchestration with the 
-existing BusinessAnalystGraphAgent integrated as one of the specialists.
+This script uses the ReAct (Reasoning + Acting) framework for iterative,
+intelligent orchestration of specialist agents.
+
+ReAct Loop: Think → Act → Observe → Repeat
 """
 
 import os
@@ -12,7 +14,7 @@ import sys
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from orchestrator import EquityResearchOrchestrator
+from orchestrator_react import ReActOrchestrator
 from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
 
 
@@ -22,7 +24,7 @@ def check_environment():
     
     # Check API keys
     if not os.getenv("PERPLEXITY_API_KEY"):
-        issues.append("❌ PERPLEXITY_API_KEY not set (required for Planner & Synthesis agents)")
+        issues.append("❌ PERPLEXITY_API_KEY not set (required for ReAct orchestrator)")
     else:
         print("✅ PERPLEXITY_API_KEY found")
     
@@ -57,8 +59,9 @@ def check_environment():
 
 def main():
     print("\n" + "="*70)
-    print("🎓 MULTI-AGENT EQUITY RESEARCH ORCHESTRATOR")
+    print("🔁 REACT-BASED MULTI-AGENT EQUITY RESEARCH SYSTEM")
     print("="*70)
+    print("\n🧠 Using ReAct Framework: Thought → Action → Observation → Repeat")
     print("\nInitializing system...\n")
     
     # Check environment
@@ -71,13 +74,13 @@ def main():
         return
     
     print("\n" + "-"*70)
-    print("INITIALIZING AGENTS...")
+    print("INITIALIZING REACT ORCHESTRATOR...")
     print("-"*70)
     
-    # Initialize orchestrator
+    # Initialize ReAct orchestrator
     try:
-        orchestrator = EquityResearchOrchestrator()
-        print("✅ Orchestrator initialized")
+        orchestrator = ReActOrchestrator(max_iterations=5)
+        print("✅ ReAct orchestrator initialized (max 5 iterations)")
     except Exception as e:
         print(f"❌ Failed to initialize orchestrator: {e}")
         return
@@ -99,25 +102,33 @@ def main():
     print("SPECIALIST AGENT STATUS:")
     print("-"*70)
     
-    from orchestrator import PlannerAgent
-    for agent_name, info in PlannerAgent.SPECIALIST_AGENTS.items():
+    from orchestrator_react import ReActOrchestrator as RO
+    for agent_name, info in RO.SPECIALIST_AGENTS.items():
         status = "✅ ACTIVE" if agent_name in orchestrator.specialist_agents else "⏳ PLANNED"
         print(f"{status:12} {agent_name:20} - {info['description'][:45]}...")
     
     # Interactive research loop
     print("\n" + "="*70)
-    print("🚀 SYSTEM READY - Enter your equity research questions")
+    print("🚀 SYSTEM READY - ReAct Framework Active")
     print("="*70)
     
-    print("\nExample queries:")
-    print("  - What are Apple's key competitive risks in 2024?")
-    print("  - Compare Microsoft and Google's profit margins")
-    print("  - Analyze Tesla's market position in the EV industry")
-    print("  - What are NVIDIA's main revenue drivers?")
+    print("\n🔮 ReAct Framework Features:")
+    print("  • Iterative reasoning - orchestrator thinks before each action")
+    print("  • Dynamic adaptation - adjusts strategy based on observations")
+    print("  • Self-correction - can call additional agents if needed")
+    print("  • Early stopping - finishes when sufficient info gathered")
+    
+    print("\n💬 Example queries:")
+    print("  - What are Apple's key competitive risks and profit margins?")
+    print("  - Compare Microsoft and Google's competitive positioning")
+    print("  - Analyze Tesla's market position and growth trajectory")
     
     print("\nCommands:")
-    print("  'ingest' - Process new documents in ./data folder")
-    print("  'quit'   - Exit the system")
+    print("  'ingest'    - Process new documents in ./data folder")
+    print("  'trace'     - Show detailed ReAct trace for last query")
+    print("  'quit'      - Exit the system")
+    
+    last_orchestrator = None
     
     while True:
         print("\n" + "="*70)
@@ -127,8 +138,18 @@ def main():
             continue
         
         if user_input.lower() in ['quit', 'exit', 'q']:
-            print("\n👋 Thank you for using the Equity Research Orchestrator!")
+            print("\n👋 Thank you for using the ReAct Equity Research Orchestrator!")
             break
+        
+        if user_input.lower() == 'trace':
+            if last_orchestrator:
+                print("\n" + "="*70)
+                print("🔁 REACT TRACE FROM LAST QUERY")
+                print("="*70)
+                print(last_orchestrator.get_trace_summary())
+            else:
+                print("⚠️  No previous query to show trace for")
+            continue
         
         if user_input.lower() == 'ingest':
             if 'business_analyst' in orchestrator.specialist_agents:
@@ -142,30 +163,47 @@ def main():
                 print("⚠️  Business Analyst not initialized - cannot ingest data")
             continue
         
-        # Execute research workflow
+        # Execute ReAct research workflow
         try:
+            print("\n🔄 Starting ReAct loop...")
             final_report = orchestrator.research(user_input)
+            last_orchestrator = orchestrator
             
             print("\n" + "="*70)
             print("📄 FINAL RESEARCH REPORT")
             print("="*70)
             print(f"\n{final_report}\n")
             
+            # Show iteration count
+            num_iterations = len(orchestrator.trace.thoughts)
+            print(f"\n📊 Completed in {num_iterations} ReAct iteration(s)")
+            
+            # Option to see trace
+            show_trace = input("\n🔍 Show detailed ReAct trace? (y/n): ").lower()
+            if show_trace == 'y':
+                print("\n" + "="*70)
+                print("🔁 REACT TRACE")
+                print("="*70)
+                print(orchestrator.get_trace_summary())
+            
             # Save report option
             save = input("\n💾 Save this report? (y/n): ").lower()
             if save == 'y':
                 timestamp = __import__('datetime').datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"reports/report_{timestamp}.md"
+                filename = f"reports/report_react_{timestamp}.md"
                 
                 os.makedirs("reports", exist_ok=True)
                 with open(filename, 'w') as f:
-                    f.write(f"# Equity Research Report\n\n")
+                    f.write(f"# Equity Research Report (ReAct Framework)\n\n")
                     f.write(f"**Query**: {user_input}\n\n")
-                    f.write(f"**Generated**: {timestamp}\n\n")
+                    f.write(f"**Generated**: {timestamp}\n")
+                    f.write(f"**ReAct Iterations**: {num_iterations}\n\n")
                     f.write("---\n\n")
                     f.write(final_report)
+                    f.write("\n\n---\n\n## ReAct Trace\n\n")
+                    f.write(orchestrator.get_trace_summary())
                 
-                print(f"✅ Report saved to {filename}")
+                print(f"✅ Report with ReAct trace saved to {filename}")
         
         except KeyboardInterrupt:
             print("\n\n⏸️  Interrupted by user")
