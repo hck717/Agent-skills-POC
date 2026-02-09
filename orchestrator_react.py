@@ -89,7 +89,7 @@ class PerplexityClient:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
         if not self.api_key:
-            raise ValueError("PERPLEXITY_API_KEY not found in environment")
+            raise ValueError("PERPLEXITY_API_KEY not found. Please provide API key.")
         
         self.base_url = "https://api.perplexity.ai/chat/completions"
         self.headers = {
@@ -97,7 +97,7 @@ class PerplexityClient:
             "Content-Type": "application/json"
         }
     
-    def chat(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-large-128k-online", temperature: float = 0.2) -> str:
+    def chat(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-small-128k-online", temperature: float = 0.2) -> str:
         """Send chat request to Perplexity API"""
         payload = {
             "model": model,
@@ -111,12 +111,30 @@ class PerplexityClient:
                 self.base_url,
                 json=payload,
                 headers=self.headers,
-                timeout=60
+                timeout=120
             )
+            
+            # Better error handling
+            if response.status_code == 400:
+                error_detail = response.json().get('error', {}).get('message', 'Unknown error')
+                raise Exception(f"Bad Request (400): {error_detail}. Check API key and model name.")
+            elif response.status_code == 401:
+                raise Exception("Unauthorized (401): Invalid API key")
+            elif response.status_code == 429:
+                raise Exception("Rate Limit (429): Too many requests")
+            
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            
+            result = response.json()
+            if 'choices' not in result or not result['choices']:
+                raise Exception(f"Unexpected API response format: {result}")
+            
+            return result["choices"][0]["message"]["content"]
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"API request failed: {str(e)}")
         except Exception as e:
-            return f"Error calling Perplexity API: {str(e)}"
+            raise Exception(f"Perplexity API error: {str(e)}")
 
 
 class ReActOrchestrator:
@@ -156,7 +174,11 @@ class ReActOrchestrator:
     }
     
     def __init__(self, perplexity_api_key: str = None, max_iterations: int = 5):
-        self.client = PerplexityClient(perplexity_api_key)
+        try:
+            self.client = PerplexityClient(perplexity_api_key)
+        except ValueError as e:
+            raise ValueError(f"Failed to initialize Perplexity client: {str(e)}")
+        
         self.max_iterations = max_iterations
         self.specialist_agents = {}  # Registry of implemented agents
         self.trace = ReActTrace()
@@ -206,13 +228,12 @@ Your task is to THINK about:
 
 AVAILABLE ACTIONS:
 - call_specialist: Call a specialist agent with a specific task
-- synthesize: Combine all gathered information into final report
 - finish: We have enough information, proceed to synthesis
 
 RESPOND IN THIS JSON FORMAT:
 {{
   "thought": "Your reasoning about current state and what to do next",
-  "action": "call_specialist" | "synthesize" | "finish",
+  "action": "call_specialist" | "finish",
   "agent_name": "agent_name" (only if action is call_specialist),
   "task_description": "specific task" (only if action is call_specialist),
   "reasoning": "Why this action makes sense given the query and history"
@@ -224,7 +245,7 @@ REMEMBER:
 - Be efficient - don't over-orchestrate
 - Consider query complexity when deciding number of agents
 
-Provide only valid JSON."""
+Provide ONLY valid JSON, no other text."""
         return prompt
     
     def _reason(self, user_query: str, iteration: int) -> Action:
@@ -235,7 +256,14 @@ Provide only valid JSON."""
         prompt = self._create_reasoning_prompt(user_query, iteration, history)
         
         messages = [{"role": "user", "content": prompt}]
-        response = self.client.chat(messages, temperature=0.1)
+        
+        try:
+            response = self.client.chat(messages, temperature=0.1)
+        except Exception as e:
+            print(f"   ⚠️ Error calling Perplexity API: {str(e)}")
+            # Fallback: finish and synthesize
+            self.trace.add_thought(f"API error: {str(e)}", iteration)
+            return Action(action_type=ActionType.FINISH)
         
         try:
             # Extract JSON
@@ -270,8 +298,9 @@ Provide only valid JSON."""
             
         except Exception as e:
             print(f"   ⚠️ Error parsing reasoning: {e}")
-            print(f"   Raw response: {response}")
+            print(f"   Raw response: {response[:200]}")
             # Fallback: finish and synthesize
+            self.trace.add_thought(f"Parse error, proceeding to synthesis", iteration)
             return Action(action_type=ActionType.FINISH)
     
     def _execute_action(self, action: Action) -> Observation:
@@ -345,7 +374,7 @@ Provide only valid JSON."""
                 })
         
         if not specialist_outputs:
-            return "No specialist agent outputs to synthesize."
+            return "Unable to generate report. No specialist agent outputs available."
         
         # Create synthesis prompt
         outputs_text = "\n\n".join([
@@ -397,11 +426,14 @@ REPORT STRUCTURE:
 
 Provide a professional, well-structured equity research report."""
         
-        messages = [{"role": "user", "content": prompt}]
-        final_report = self.client.chat(messages, temperature=0.3)
-        
-        print("   ✅ Synthesis complete")
-        return final_report
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            final_report = self.client.chat(messages, temperature=0.3)
+            print("   ✅ Synthesis complete")
+            return final_report
+        except Exception as e:
+            print(f"   ❌ Synthesis error: {str(e)}")
+            return f"Error generating synthesis: {str(e)}\n\nPartial information gathered:\n{outputs_text}"
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop: Iteratively reason and act until task is complete"""
@@ -460,7 +492,11 @@ def main():
         return
     
     # Initialize ReAct orchestrator
-    orchestrator = ReActOrchestrator(max_iterations=5)
+    try:
+        orchestrator = ReActOrchestrator(max_iterations=5)
+    except ValueError as e:
+        print(f"❌ {str(e)}")
+        return
     
     # Optional: Register specialist agents
     # from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
