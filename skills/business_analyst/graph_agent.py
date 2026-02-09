@@ -93,16 +93,17 @@ class BusinessAnalystGraphAgent:
                 scores = self.reranker.predict(pairs)
                 top_docs = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)[:8]
                 
-                # 🟢 DEBUG PRINT: Check metadata keys
                 if top_docs:
                     print(f"   🔍 DEBUG: Metadata sample: {top_docs[0][0].metadata}")
 
-                # 🟢 ROBUST METADATA HANDLING
+                # 🟢 FORMAT: --- SOURCE: filename (Page X) ---
                 formatted_chunks = []
                 for d, s in top_docs:
                     source = d.metadata.get('source') or d.metadata.get('file_path') or "Unknown_File"
                     source = os.path.basename(source)
                     page = d.metadata.get('page') or d.metadata.get('page_number') or "N/A"
+                    
+                    # ✅ CRITICAL: Use format orchestrator expects
                     formatted_chunks.append(f"--- SOURCE: {source} (Page {page}) ---\n{d.page_content}")
                 
                 rag_content = "\n\n".join(formatted_chunks)
@@ -128,23 +129,30 @@ class BusinessAnalystGraphAgent:
             print("🎭 [Persona] CHIEF STRATEGY OFFICER")
             base_prompt = self._load_prompt("chief_strategy_officer")
             
-        # 🟢 STRICT TEMPLATE
+        # 🟢 CRITICAL: Tell LLM to preserve SOURCE markers
         citation_instruction = """
         ---------------------------------------------------
-        CRITICAL: ANSWER FORMATTING REQUIRED
+        CRITICAL CITATION FORMAT REQUIREMENT:
         
-        You must structure your answer exactly like this:
+        The document chunks are formatted as:
+        --- SOURCE: filename.pdf (Page 123) ---
+        [chunk content]
         
-        ## [Risk/Point 1]
-        [Explanation of the point]
-        **Source:** [Filename.pdf, Page X]
+        You MUST preserve these SOURCE markers in your analysis.
         
-        ## [Risk/Point 2]
-        [Explanation of the point]
-        **Source:** [Filename.pdf, Page X]
+        For EVERY point you make, include the SOURCE marker immediately after:
         
-        Do not write general paragraphs without sources. 
-        If a specific fact comes from 'Unknown_File', label it [Source: Unknown].
+        Example:
+        ## Competitive Risk 1: Market Share Decline
+        Apple faces declining market share in China with 15% YoY decrease.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 23) ---
+        
+        ## Competitive Risk 2: Pricing Pressure
+        Premium pricing strategy limits addressable market.
+        --- SOURCE: APPL 10-k Filings.pdf (Page 45) ---
+        
+        DO NOT write analysis without citing sources.
+        PRESERVE the exact "--- SOURCE: filename (Page X) ---" format.
         ---------------------------------------------------
         """
         
@@ -152,7 +160,7 @@ class BusinessAnalystGraphAgent:
         
         {citation_instruction}
 
-        ====== DOCUMENT CONTEXT ======
+        ====== DOCUMENT CONTEXT (with SOURCE markers) ======
         {context}
         ==============================
         
@@ -188,17 +196,14 @@ class BusinessAnalystGraphAgent:
         print(f"   Path: {self.db_path}")
         
         try:
-            # Close all vectorstore connections
             self.vectorstores = {}
             
-            # Delete the entire ChromaDB directory
             if os.path.exists(self.db_path):
                 shutil.rmtree(self.db_path)
                 print(f"   ✅ Deleted {self.db_path}")
             else:
                 print(f"   ⚠️ Directory doesn't exist: {self.db_path}")
             
-            # Recreate empty directory
             os.makedirs(self.db_path, exist_ok=True)
             print(f"   ✅ Created fresh directory")
             
