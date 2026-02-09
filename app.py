@@ -127,7 +127,7 @@ def initialize_orchestrator(max_iterations: int = 3, ollama_url: str = "http://l
             try:
                 web_search_agent = WebSearchAgent(
                     tavily_api_key=tavily_key,
-                    ollama_model="qwen2.5:7b"
+                    ollama_model="deepseek-r1:8b"
                 )
                 orchestrator.register_specialist("web_search_agent", web_search_agent)
                 st.session_state.web_search_agent = web_search_agent
@@ -179,7 +179,7 @@ with st.sidebar:
         st.markdown("""
         **Required Ollama Models:**
         ```bash
-        ollama pull qwen2.5:7b
+        ollama pull deepseek-r1:8b
         ollama pull nomic-embed-text
         ```
         
@@ -368,7 +368,7 @@ curl -fsSL https://ollama.com/install.sh | sh
         
         st.markdown("**Step 2: Pull Models**")
         st.code("""
-ollama pull qwen2.5:7b
+ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
         """, language="bash")
     
