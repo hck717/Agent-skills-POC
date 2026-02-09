@@ -12,3 +12,4 @@ sentence-transformers
 docx2txt
 pandas
 requests
+streamlit
