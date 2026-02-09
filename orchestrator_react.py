@@ -433,7 +433,7 @@ Provide ONLY valid JSON."""
             return result
     
     def _synthesize(self, user_query: str) -> str:
-        """Synthesize all observations into final report"""
+        """Synthesize all observations into final report WITH REFERENCES SECTION"""
         num_obs = len(self.trace.observations)
         specialist_calls = self.trace.get_specialist_calls()
         
@@ -474,16 +474,17 @@ This report was generated without calling specialist agents. For more detailed a
         # Create synthesis prompt with specialist outputs
         outputs_text = "\n\n".join([
             f"{'='*60}\n"
-            f"AGENT: {output['agent'].upper().replace('_', ' ')}\n"
+            f"SOURCE [{i+1}]: {output['agent'].upper().replace('_', ' ')}\n"
             f"{'='*60}\n"
             f"Task: {output['task']}\n\n"
             f"Analysis:\n{output['result']}\n"
-            for output in specialist_outputs
+            for i, output in enumerate(specialist_outputs)
         ])
         
-        reasoning_summary = "\n".join([
-            f"{i+1}. Iteration {thought.iteration}: {thought.content[:200]}..."
-            for i, thought in enumerate(self.trace.thoughts)
+        # Create reference mapping
+        references_list = "\n".join([
+            f"[{i+1}] {output['agent'].replace('_', ' ').title()}: {output['task'][:100]}..."
+            for i, output in enumerate(specialist_outputs)
         ])
         
         prompt = f"""You are a Senior Equity Research Analyst synthesizing a multi-agent research report.
@@ -491,65 +492,79 @@ This report was generated without calling specialist agents. For more detailed a
 ORIGINAL QUERY:
 {user_query}
 
-REACT REASONING TRACE ({len(self.trace.thoughts)} iterations):
-{reasoning_summary}
-
 SPECIALIST AGENT OUTPUTS ({len(specialist_outputs)} specialists):
 
 {outputs_text}
 
+====================================
+📚 SOURCE REFERENCE MAPPING
+====================================
+{references_list}
+
 YOUR SYNTHESIS TASK:
 
 1. **Integrate all specialist insights** into a coherent narrative
-2. **Cross-validate findings** across different specialist perspectives  
-3. **Highlight key insights** supported by multiple sources
-4. **Identify any gaps or contradictions** in the analysis
-5. **Provide actionable conclusions** based on the comprehensive research
+2. **Cite EVERY fact using [1], [2], [3]** corresponding to the SOURCE numbers above
+3. **Include a complete REFERENCES section** at the end of your report
+4. **Cross-validate findings** across different specialists
+5. **Provide actionable conclusions**
 
 REQUIRED REPORT STRUCTURE:
 
 ## Executive Summary
-[3-4 sentences capturing the most important findings across all specialists]
+[3-4 sentences with citations like: "Apple's revenue reached $463B [1], driven by...📞]
 
 ## Detailed Analysis
-[Organized by key themes, integrating insights from multiple agents. Each theme should reference which specialists provided supporting evidence]
+[Organized by key themes, every statement cited]
 
 ### [Theme 1]
-[Synthesis of relevant specialist insights]
+[Facts with citations: "According to the 10-K analysis [1], competition intensified..."]
 
 ### [Theme 2]
-[Synthesis of relevant specialist insights]
+[Facts with citations]
 
 ## Key Findings & Metrics
-[Bullet points of critical data, ratios, and quantitative insights with sources]
+- Revenue: $XXX [1]
+- Margin: XX% [2]
+[All metrics cited]
 
-## Risk Factors & Considerations
-[Consolidated risks identified by specialists]
+## Risk Factors
+[Risks cited to specialist sources]
 
-## Conclusion & Recommendations
-[Balanced final assessment with actionable insights]
+## Conclusion
+[Final assessment with citations]
 
 ---
 
-**Important**: 
-- Cite which specialist provided each insight (e.g., "Business Analyst identified...", "According to the Quantitative Analysis...")
-- Don't just concatenate - synthesize and integrate across sources
-- Professional equity research tone
-- Be specific with data and evidence
+## 📚 References
 
-Provide the complete synthesis report now."""
+[1] Business Analyst: Analysis of Apple's 10-K filing...
+[2] Quantitative Analyst: Financial metrics and ratios...
+[3] Industry Analyst: Sector competitive landscape...
+[Continue for all {len(specialist_outputs)} specialists]
+
+---
+
+⚠️ CRITICAL REQUIREMENTS:
+- **EVERY claim needs [1], [2], [3] etc. citation**
+- **YOU MUST INCLUDE COMPLETE REFERENCES SECTION** at end
+- Use multiple citations for facts from multiple sources: [1][2]
+- The References section MUST list what each number refers to
+- Be specific: "[1] Business Analyst: 10-K analysis of competitive risks"
+
+Provide the complete report now with full References section."""
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            # Use sonar-deep-research for comprehensive synthesis
-            print("   🔄 Generating synthesis with sonar-deep-research...")
+            # Use sonar-pro for synthesis
+            print("   🔄 Generating synthesis with References section...")
             final_report = self.client.chat(messages, model="sonar-pro", temperature=0.3)
             print("   ✅ Synthesis complete")
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            # Fallback: return raw specialist outputs
-            return f"""## Research Report
+            # Fallback: return raw outputs with references
+            fallback = f"""## Research Report
 
 **Note**: Synthesis failed, presenting raw specialist outputs.
 
@@ -557,8 +572,15 @@ Provide the complete synthesis report now."""
 
 ---
 
+## 📚 References
+
+{references_list}
+
+---
+
 **Error during synthesis**: {str(e)}
 """
+            return fallback
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop: Iteratively reason and act until task is complete"""
