@@ -247,8 +247,8 @@ streamlit run app.py
     st.markdown("---")
     st.markdown("### 📚 Documentation")
     st.markdown("""
-    - [REACT_FRAMEWORK.md](REACT_FRAMEWORK.md) - Complete ReAct guide
-    - [SPECIALIST_AGENTS.md](SPECIALIST_AGENTS.md) - Agent specifications
+    - [docs/REACT_FRAMEWORK.md](docs/REACT_FRAMEWORK.md) - Complete ReAct guide
+    - [docs/SPECIALIST_AGENTS.md](docs/SPECIALIST_AGENTS.md) - Agent specifications
     - [README.md](README.md) - Project overview
     """)
 
@@ -357,7 +357,12 @@ else:
                 with col3:
                     st.metric("Agents Called", latest['iterations'])
                 with col4:
-                    st.metric("Time/Iter", f"{latest['duration']/latest['iterations']:.1f}s")
+                    # Fix division by zero
+                    if latest['iterations'] > 0:
+                        time_per_iter = latest['duration'] / latest['iterations']
+                        st.metric("Time/Iter", f"{time_per_iter:.1f}s")
+                    else:
+                        st.metric("Time/Iter", "N/A")
                 
                 st.markdown("---")
                 
