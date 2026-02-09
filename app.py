@@ -8,6 +8,7 @@ Run with: streamlit run app.py
 import streamlit as st
 import os
 import sys
+import re
 from datetime import datetime
 
 # Add current directory to path
@@ -56,10 +57,13 @@ st.markdown("""
         background-color: #f8f9fa;
         border: 1px solid #dee2e6;
         border-radius: 0.5rem;
-        padding: 1rem;
-        font-family: monospace;
-        font-size: 0.9rem;
+        padding: 1.5rem;
+        font-family: 'Courier New', monospace;
+        font-size: 0.85rem;
         white-space: pre-wrap;
+        max-height: 600px;
+        overflow-y: auto;
+        line-height: 1.6;
     }
     .metric-card {
         background-color: #ffffff;
@@ -67,6 +71,21 @@ st.markdown("""
         border-radius: 0.5rem;
         padding: 1rem;
         text-align: center;
+    }
+    .citation {
+        display: inline-block;
+        background-color: #e3f2fd;
+        color: #1976d2;
+        padding: 2px 6px;
+        margin: 0 2px;
+        border-radius: 3px;
+        font-size: 0.85em;
+        font-weight: bold;
+        border: 1px solid #90caf9;
+    }
+    .report-section {
+        line-height: 1.8;
+        font-size: 1.05rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -83,6 +102,24 @@ if 'perplexity_api_key' not in st.session_state:
     st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
 if 'eodhd_api_key' not in st.session_state:
     st.session_state.eodhd_api_key = os.getenv("EODHD_API_KEY", "")
+if 'show_trace_default' not in st.session_state:
+    st.session_state.show_trace_default = True  # Changed to True by default
+
+
+def format_citations(text: str) -> str:
+    """
+    Format citations in the report to be visible and styled
+    Converts [1], [2][3], etc. to styled citation badges
+    """
+    # Pattern to match citations like [1], [2], [web:3], [cite:4], etc.
+    citation_pattern = r'\[(\w+:?\d+)\]'
+    
+    def replace_citation(match):
+        citation = match.group(1)
+        return f'<span class="citation">[{citation}]</span>'
+    
+    formatted_text = re.sub(citation_pattern, replace_citation, text)
+    return formatted_text
 
 
 def initialize_orchestrator(perplexity_api_key: str, max_iterations: int = 5):
@@ -200,9 +237,10 @@ with st.sidebar:
         )
         st.session_state.orchestrator.max_iterations = max_iterations
         
-        show_trace_by_default = st.checkbox(
+        # Show trace by default checkbox
+        st.session_state.show_trace_default = st.checkbox(
             "Auto-show ReAct Trace",
-            value=False,
+            value=st.session_state.show_trace_default,
             help="Automatically display reasoning trace after each query"
         )
         
@@ -274,9 +312,10 @@ ollama pull nomic-embed-text
     st.markdown("---")
     st.markdown("### 📚 Documentation")
     st.markdown("""
+    - [QUICKSTART.md](QUICKSTART.md) - 5-minute setup guide ⭐
     - [docs/REACT_FRAMEWORK.md](docs/REACT_FRAMEWORK.md) - Complete ReAct guide
     - [docs/SPECIALIST_AGENTS.md](docs/SPECIALIST_AGENTS.md) - Agent specifications
-    - [docs/UI_GUIDE.md](docs/UI_GUIDE.md) - UI usage guide
+    - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Debug guide
     - [README.md](README.md) - Project overview
     """)
 
@@ -289,23 +328,23 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("""
-            **Company Analysis:**
+            **Simple Queries:**
             - What are Apple's key competitive risks?
             - Analyze Tesla's market position
-            - Compare Microsoft and Google
+            - What is Microsoft's profit margin?
             """)
         with col2:
             st.markdown("""
-            **Financial Metrics:**
-            - What is Apple's profit margin?
-            - Analyze Amazon's growth trajectory  
-            - Compare Netflix and Disney's valuations
+            **Complex Queries (triggers full 5 iterations):**
+            - Analyze Apple's competitive positioning, key risk factors, and business model sustainability based on their latest 10-K filing
+            - Compare Microsoft and Google's business models, financial performance, and competitive advantages
+            - Evaluate Tesla's growth strategy, market risks, and financial health from their 10-K
             """)
     
     # Query input
     query = st.text_area(
         "Your Question:",
-        placeholder="e.g., What are Apple's key competitive risks and profit margins?",
+        placeholder="e.g., Analyze Apple's competitive positioning, key risk factors, and business model sustainability based on their latest 10-K filing.",
         height=100,
         key="query_input"
     )
@@ -343,6 +382,7 @@ else:
                 
                 duration = (end_time - start_time).total_seconds()
                 num_iterations = len(st.session_state.orchestrator.trace.thoughts)
+                specialists_called = st.session_state.orchestrator.trace.get_specialist_calls()
                 
                 # Add to history
                 st.session_state.history.append({
@@ -351,10 +391,11 @@ else:
                     'trace': st.session_state.orchestrator.get_trace_summary(),
                     'duration': duration,
                     'iterations': num_iterations,
+                    'specialists': specialists_called,
                     'timestamp': datetime.now()
                 })
                 
-                st.success(f"✅ Analysis complete in {duration:.1f}s ({num_iterations} iterations)")
+                st.success(f"✅ Analysis complete in {duration:.1f}s ({num_iterations} iterations, {len(specialists_called)} specialists)")
                 
             except Exception as e:
                 st.error(f"❌ Error during analysis: {str(e)}")
@@ -391,7 +432,8 @@ else:
                 with col2:
                     st.metric("Duration", f"{latest['duration']:.1f}s")
                 with col3:
-                    st.metric("Agents Called", latest['iterations'])
+                    num_specialists = len(latest.get('specialists', []))
+                    st.metric("Specialists", num_specialists)
                 with col4:
                     # Fix division by zero
                     if latest['iterations'] > 0:
@@ -400,38 +442,70 @@ else:
                     else:
                         st.metric("Time/Iter", "N/A")
                 
+                # Show which specialists were called
+                if latest.get('specialists'):
+                    st.info(f"🤖 **Specialists Called:** {', '.join(latest['specialists'])}")
+                
                 st.markdown("---")
                 
                 # Query
                 st.markdown("**🔍 Query:**")
                 st.info(latest['query'])
                 
-                # Report
+                # Report with formatted citations
                 st.markdown("**📄 Research Report:**")
-                st.markdown(latest['report'])
+                formatted_report = format_citations(latest['report'])
+                st.markdown(f'<div class="report-section">{formatted_report}</div>', unsafe_allow_html=True)
                 
-                # ReAct Trace
+                # ReAct Trace - NOW ALWAYS VISIBLE BY DEFAULT
                 st.markdown("---")
-                show_trace = st.checkbox(
-                    "🔍 Show ReAct Trace",
-                    value=show_trace_by_default,
-                    key="show_trace_latest"
-                )
+                st.markdown("### 🧠 ReAct Reasoning Trace")
+                st.markdown("*Step-by-step reasoning and actions taken during the analysis*")
                 
-                if show_trace:
-                    st.markdown("**🧠 ReAct Reasoning Trace:**")
+                # Show trace in an expander (expanded by default if setting is on)
+                with st.expander("📋 View Detailed Trace", expanded=st.session_state.show_trace_default):
                     st.markdown(f'<div class="trace-box">{latest["trace"]}</div>', unsafe_allow_html=True)
+                
+                # Option to download just this report
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "💾 Download Report",
+                        data=f"# Research Report\n\n**Query:** {latest['query']}\n\n## Report\n\n{latest['report']}\n\n## ReAct Trace\n\n{latest['trace']}",
+                        file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
         
         with tabs[1]:
             if len(st.session_state.history) > 1:
                 for idx, item in enumerate(reversed(st.session_state.history[:-1]), 1):
-                    with st.expander(f"Query {len(st.session_state.history) - idx}: {item['query'][:60]}..."):
-                        st.markdown(f"**Timestamp:** {item['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
-                        st.markdown(f"**Duration:** {item['duration']:.1f}s | **Iterations:** {item['iterations']}")
-                        st.markdown("---")
-                        st.markdown(item['report'])
+                    with st.expander(f"📝 Query {len(st.session_state.history) - idx}: {item['query'][:80]}..."):
+                        st.markdown(f"**⏰ Timestamp:** {item['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
                         
-                        if st.checkbox(f"Show trace", key=f"trace_{idx}"):
+                        # Metrics for this query
+                        mcol1, mcol2, mcol3 = st.columns(3)
+                        with mcol1:
+                            st.metric("Duration", f"{item['duration']:.1f}s")
+                        with mcol2:
+                            st.metric("Iterations", item['iterations'])
+                        with mcol3:
+                            num_specs = len(item.get('specialists', []))
+                            st.metric("Specialists", num_specs)
+                        
+                        if item.get('specialists'):
+                            st.info(f"🤖 **Specialists:** {', '.join(item['specialists'])}")
+                        
+                        st.markdown("---")
+                        
+                        # Report with citations
+                        st.markdown("**📄 Report:**")
+                        formatted_hist_report = format_citations(item['report'])
+                        st.markdown(f'<div class="report-section">{formatted_hist_report}</div>', unsafe_allow_html=True)
+                        
+                        # Trace
+                        if st.checkbox(f"🧠 Show ReAct Trace", key=f"trace_{idx}"):
                             st.markdown(f'<div class="trace-box">{item["trace"]}</div>', unsafe_allow_html=True)
             else:
                 st.info("No history yet. Run another query to see history.")
