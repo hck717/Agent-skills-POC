@@ -2,7 +2,7 @@
 """
 ReAct-based Multi-Agent Orchestrator
 
-Rule-based orchestration with LOCAL LLM synthesis (no web search interference).
+Rule-based orchestration with LOCAL LLM synthesis for professional equity research.
 """
 
 import os
@@ -11,6 +11,7 @@ import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from datetime import datetime
 import requests
 
 
@@ -98,7 +99,7 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 3000
+                "num_predict": 3500  # Increased for comprehensive reports
             }
         }
         
@@ -187,7 +188,7 @@ class ReActOrchestrator:
         if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents:
             thought = "Starting with Business Analyst for document-based analysis"
             self.trace.add_thought(thought, iteration)
-            print(f"   💭 {thought}")
+            print(f"   💡 {thought}")
             
             return Action(
                 action_type=ActionType.CALL_SPECIALIST,
@@ -200,7 +201,7 @@ class ReActOrchestrator:
         if "web_search_agent" in self.specialist_agents and "web_search_agent" not in called_agents and "business_analyst" in called_agents:
             thought = "Calling Web Search Agent to supplement document analysis with current data"
             self.trace.add_thought(thought, iteration)
-            print(f"   💭 {thought}")
+            print(f"   💡 {thought}")
             
             # Get business analyst's output to pass as context
             business_analyst_output = ""
@@ -219,7 +220,7 @@ class ReActOrchestrator:
         # Rule 3: Finish after both agents called (or max iterations)
         thought = f"Analysis complete with {len(called_agents)} specialists, ready to synthesize"
         self.trace.add_thought(thought, iteration)
-        print(f"   💭 {thought}")
+        print(f"   💡 {thought}")
         
         return Action(
             action_type=ActionType.FINISH,
@@ -337,8 +338,11 @@ class ReActOrchestrator:
         return document_sources
     
     def _synthesize(self, user_query: str) -> str:
-        """Synthesize with LOCAL LLM (no web search)"""
+        """
+        Synthesize with LOCAL LLM - Professional Equity Research Report
+        """
         specialist_calls = self.trace.get_specialist_calls()
+        current_date = datetime.now().strftime("%B %d, %Y")
         
         print(f"\n📊 [SYNTHESIS] Combining insights...")
         print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
@@ -412,51 +416,117 @@ class ReActOrchestrator:
             for num, doc in sorted(document_sources.items())
         ])
         
-        # 🔥 ENHANCED: Synthesis prompt
-        prompt = f"""You are an equity research analyst synthesizing multi-source analysis.
+        # 🔥 PROFESSIONAL EQUITY RESEARCH SYNTHESIS PROMPT
+        prompt = f"""You are a Senior Equity Research Analyst synthesizing a professional research report.
 
-USER QUERY: {user_query}
+REPORT DATE: {current_date}
+CLIENT QUERY: {user_query}
+
+DATA SOURCES (TWO TEMPORAL LAYERS):
+1. HISTORICAL: 10-K/10-Q SEC filings (FY2024-FY2025 data)
+2. CURRENT: Web sources (Q4 2025 - Q1 2026 developments)
 
 SPECIALIST ANALYSIS (with SOURCE citations):
 {outputs_text}
 
-SOURCE REFERENCE MAP (includes BOTH documents AND web sources):
+SOURCE REFERENCE MAP:
 {references_list}
 
-INSTRUCTIONS:
-1. Synthesize a comprehensive research report
-2. Structure: Executive Summary, Detailed Analysis, Key Findings, Risk Factors, Conclusion, References
+==========================================================================
+PROFESSIONAL REPORT STRUCTURE
+==========================================================================
 
-3. 🔥 CRITICAL CITATION RULES:
-   - Replace [SOURCE-X] with [X] (e.g., [SOURCE-1] becomes [1])
-   - CITE FREQUENTLY: Every factual claim needs a citation
-   - Mix document sources (10-K filings) with web sources (news, analysts)
-   - Example: "iPhone revenue is $201B per 10-K [1], while analysts project 15% growth [2]."
-   - DO NOT make unsourced claims
-   - Aim for 1-2 citations per paragraph
+## Executive Summary
+[2-3 sentences: Key findings, investment implications, temporal context]
 
-4. DISTINGUISH between:
-   - Historical data from documents [X]
-   - Current market data from web [Y]
-   - Note recency: "Per latest 10-K [1]" vs "Recent reports indicate [5]"
+## Investment Thesis
+[3-4 bullet points: Core reasons to consider the stock, backed by data]
 
-5. End with References section listing ALL [1], [2], [3]... showing both:
-   - "[1] APPL 10-k Filings.pdf - Page 23" (document)
-   - "[5] Bloomberg - https://bloomberg.com/..." (web)
+## Business Overview (Historical Context)
+[Per FY2025 10-K data - cite with [X] for 10-K sources]
+- Business model and revenue streams
+- Market position and competitive advantages
+- Key financial metrics from latest filing
 
-6. If no SOURCE citations present, note: "Analysis lacks source attribution"
+## Recent Developments (Current Period)
+[Per Q4 2025 - Q1 2026 web sources - cite with [Y] for web sources]
+- Latest product launches and strategic initiatives  
+- Recent financial performance vs expectations
+- Market sentiment and analyst opinion shifts
+- Emerging competitive dynamics
 
-Synthesize now with FREQUENT mixed citations:"""
+## Risk Analysis
+### Historical Risks (Per 10-K) [cite 10-K sources]
+- Disclosed risk factors from SEC filings
+
+### Emerging Risks (Current) [cite web sources]
+- New competitive threats
+- Regulatory developments
+- Market condition changes
+
+## Valuation Context
+[If available: P/E, EV/Sales, growth rates - cite sources]
+- Historical valuation metrics [10-K sources]
+- Current market valuation [web sources]
+- Analyst price targets [web sources]
+
+## Conclusion
+[2-3 sentences: Balanced view considering both historical fundamentals and current developments]
+
+## Data Quality Notice
+⚠️ **Temporal Distinction**:
+- 10-K data: Historical (6-12 months old as of filing date)
+- Web data: Current market developments (last 3 months)
+- Investment decisions should consider both layers
+
+## References
+[List ALL citations with clear temporal markers]
+
+==========================================================================
+CITATION REQUIREMENTS (CRITICAL)
+==========================================================================
+
+1. TEMPORAL MARKERS (Mandatory):
+   - 10-K data: "Per the FY2025 10-K [1]..."
+   - Web data: "As of Q1 2026 [8]..." or "Recent reports indicate [9]..."
+
+2. CITATION DENSITY:
+   - Every factual claim = citation
+   - Every metric/number = citation  
+   - Every risk factor = citation
+   - Aim for 2-3 citations per paragraph
+
+3. FORMAT:
+   - Replace [SOURCE-X] with [X]
+   - Example: "Revenue reached $394B per FY2025 10-K [1], while Q1 2026 guidance suggests 8% YoY growth [8]."
+
+4. PROFESSIONAL TONE:
+   - Concise, data-driven, specific
+   - Use exact figures: "15.2%" not "around 15%"
+   - Attribution: "Goldman Sachs projects..." not "analysts think..."
+   - Objective: Present data, avoid speculation
+
+5. MIXING SOURCES:
+   - Contrast historical vs current: "While FY2025 showed... [1], recent developments indicate... [7]"
+   - Show progression: "Margins were 25.3% in FY2025 [2], expanding to 26.1% in Q4 2025 [9]"
+
+==========================================================================
+GENERATE REPORT NOW
+==========================================================================
+
+Provide a professional equity research report following the structure above.
+Cite FREQUENTLY with proper temporal markers.
+"""
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            print("   🔄 Generating synthesis with local LLM...")
-            final_report = self.client.chat(messages, temperature=0.3)
+            print("   🔄 Generating professional equity research synthesis...")
+            final_report = self.client.chat(messages, temperature=0.2)  # Slightly higher for better prose
             print("   ✅ Synthesis complete")
             
             # Post-process: Ensure References section exists
-            if len(document_sources) > 0 and "## References" not in final_report and "## 📚 References" not in final_report:
-                refs = "\n\n## 📚 References\n\n" + "\n".join([
+            if len(document_sources) > 0 and "## References" not in final_report:
+                refs = "\n\n## References\n\n" + "\n".join([
                     f"[{num}] {doc}"
                     for num, doc in sorted(document_sources.items())
                 ])
@@ -466,12 +536,12 @@ Synthesize now with FREQUENT mixed citations:"""
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
             # Fallback
-            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
+            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Local LLM + Web)")
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -528,7 +598,7 @@ def main():
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Local LLM Orchestrator Ready")
+    print("\n🚀 Professional Equity Research Orchestrator Ready")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
