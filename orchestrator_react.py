@@ -3,7 +3,7 @@
 ReAct-based Multi-Agent Orchestrator
 
 Rule-based orchestration with LOCAL LLM synthesis for professional equity research.
-Version: 2.0 - 10/10 Quality Standard
+Version: 2.1 - 10/10 Quality Standard (Timeout Optimized)
 """
 
 import os
@@ -90,7 +90,7 @@ class OllamaClient:
         self.base_url = base_url
         self.model = model
     
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.3) -> str:
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.3, num_predict: int = 3500, timeout: int = 300) -> str:
         """Send chat request to Ollama API"""
         url = f"{self.base_url}/api/chat"
         
@@ -100,12 +100,12 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 4000  # Increased for comprehensive reports
+                "num_predict": num_predict
             }
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=150)
+            response = requests.post(url, json=payload, timeout=timeout)
             response.raise_for_status()
             result = response.json()
             return result["message"]["content"]
@@ -116,7 +116,7 @@ class OllamaClient:
         try:
             print("🔌 Testing Ollama connection...")
             messages = [{"role": "user", "content": "Say 'OK'."}]
-            response = self.chat(messages, temperature=0.0)
+            response = self.chat(messages, temperature=0.0, timeout=30)
             if response:
                 print("✅ Ollama connected!")
                 return True
@@ -608,7 +608,13 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         try:
             messages = [{"role": "user", "content": prompt}]
             print("   🔄 Generating 10/10 professional equity research synthesis...")
-            final_report = self.client.chat(messages, temperature=0.15)  # Lower temp for precision
+            # 🔥 Optimized parameters: balanced quality vs speed
+            final_report = self.client.chat(
+                messages, 
+                temperature=0.25,  # Slightly higher for faster generation
+                num_predict=3500,  # Optimized token count
+                timeout=300        # 5 minute timeout
+            )
             print("   ✅ Synthesis complete")
             
             # 🔥 POST-PROCESSING: Clean up [SOURCE-X] to [X]
@@ -655,8 +661,8 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.0")
-        print("   10/10 Professional Quality Standard")
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.1")
+        print("   10/10 Professional Quality Standard (Timeout Optimized)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -713,8 +719,8 @@ def main():
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Professional Equity Research Orchestrator v2.0 Ready")
-    print("   10/10 Quality Standard - Institutional Grade")
+    print("\n🚀 Professional Equity Research Orchestrator v2.1 Ready")
+    print("   10/10 Quality Standard - Institutional Grade (Timeout Optimized)")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
