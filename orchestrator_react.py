@@ -81,6 +81,10 @@ class ReActTrace:
                 summary.append(f"  Task: {action.task_description}")
             summary.append(f"Observation: {obs.result[:200]}..." if len(obs.result) > 200 else f"Observation: {obs.result}")
         return "\n".join(summary)
+    
+    def get_specialist_calls(self) -> List[str]:
+        """Get list of specialist agents that were called"""
+        return [action.agent_name for action in self.actions if action.action_type == ActionType.CALL_SPECIALIST and action.agent_name]
 
 
 class PerplexityClient:
@@ -106,16 +110,7 @@ class PerplexityClient:
         }
     
     def chat(self, messages: List[Dict[str, str]], model: str = "sonar-pro", temperature: float = 0.2) -> str:
-        """Send chat request to Perplexity API
-        
-        Args:
-            messages: List of message dictionaries with 'role' and 'content'
-            model: Sonar model to use (sonar, sonar-pro, sonar-reasoning-pro, sonar-deep-research)
-            temperature: Sampling temperature (0-1)
-            
-        Returns:
-            Response content string
-        """
+        """Send chat request to Perplexity API"""
         # Validate model
         if model not in self.VALID_MODELS:
             print(f"⚠️ Warning: Model '{model}' not in known list. Using 'sonar-pro' instead.")
@@ -170,11 +165,7 @@ class PerplexityClient:
             raise Exception(f"Perplexity API error: {str(e)}")
     
     def test_connection(self) -> bool:
-        """Test if API connection works
-        
-        Returns:
-            True if connection successful, False otherwise
-        """
+        """Test if API connection works"""
         try:
             print("🔌 Testing Perplexity API connection...")
             messages = [{"role": "user", "content": "Say 'OK' if you can read this."}]
@@ -194,34 +185,40 @@ class ReActOrchestrator:
     
     SPECIALIST_AGENTS = {
         "business_analyst": {
-            "description": "Analyzes 10-K filings, financial statements, business models, competitive positioning, and strategic risks",
-            "capabilities": ["Financial statement analysis", "Competitive intelligence", "Risk assessment", "Business model evaluation"],
-            "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "business model", "MD&A"]
+            "description": "Analyzes 10-K filings, financial statements, business models, competitive positioning, and strategic risks using RAG from local documents",
+            "capabilities": ["Financial statement analysis", "Competitive intelligence", "Risk assessment", "Business model evaluation", "Document retrieval"],
+            "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "business model", "MD&A", "financial statement"],
+            "priority": "HIGH - Has access to proprietary documents via ChromaDB"
         },
         "quantitative_analyst": {
             "description": "Performs quantitative analysis including financial ratios, valuation metrics, growth rates, and statistical modeling",
             "capabilities": ["DCF valuation", "Ratio analysis", "Trend forecasting", "Comparative metrics"],
-            "keywords": ["calculate", "ratio", "P/E", "margin", "DCF", "valuation", "CAGR", "growth"]
+            "keywords": ["calculate", "ratio", "P/E", "margin", "DCF", "valuation", "CAGR", "growth"],
+            "priority": "MEDIUM - Placeholder for now"
         },
         "market_analyst": {
             "description": "Tracks market sentiment, technical indicators, price movements, trading volumes, and market positioning",
             "capabilities": ["Sentiment analysis", "Technical analysis", "Market trends", "Trading patterns"],
-            "keywords": ["sentiment", "price", "stock", "volume", "technical", "chart", "analyst rating"]
+            "keywords": ["sentiment", "price", "stock", "volume", "technical", "chart", "analyst rating"],
+            "priority": "MEDIUM - Placeholder for now"
         },
         "industry_analyst": {
             "description": "Provides sector-specific insights, industry trends, regulatory landscape, and peer benchmarking",
             "capabilities": ["Industry dynamics", "Regulatory analysis", "Peer comparison", "Sector trends"],
-            "keywords": ["industry", "sector", "peers", "competitors", "market share", "regulation"]
+            "keywords": ["industry", "sector", "peers", "competitors", "market share", "regulation"],
+            "priority": "MEDIUM - Placeholder for now"
         },
         "esg_analyst": {
             "description": "Evaluates environmental, social, and governance factors, sustainability initiatives, and ESG risk exposure",
             "capabilities": ["ESG scoring", "Sustainability assessment", "Governance evaluation", "Climate risk"],
-            "keywords": ["ESG", "sustainability", "carbon", "governance", "diversity", "environmental"]
+            "keywords": ["ESG", "sustainability", "carbon", "governance", "diversity", "environmental"],
+            "priority": "LOW - Placeholder for now"
         },
         "macro_analyst": {
             "description": "Analyzes macroeconomic factors, interest rates, currency impacts, geopolitical risks affecting the company",
             "capabilities": ["Economic indicators", "Rate sensitivity", "FX exposure", "Geopolitical risk"],
-            "keywords": ["interest rate", "inflation", "GDP", "currency", "FX", "geopolitical", "macro"]
+            "keywords": ["interest rate", "inflation", "GDP", "currency", "FX", "geopolitical", "macro"],
+            "priority": "LOW - Placeholder for now"
         }
     }
     
@@ -248,16 +245,19 @@ class ReActOrchestrator:
         """Create prompt for reasoning step"""
         
         agents_list = "\n".join([
-            f"- {name}: {info['description']}\n  Keywords: {', '.join(info['keywords'][:5])}"
+            f"- {name}: {info['description']}\n  Priority: {info['priority']}\n  Keywords: {', '.join(info['keywords'][:5])}"
             for name, info in self.SPECIALIST_AGENTS.items()
         ])
         
         available_agents_status = "\n".join([
-            f"- {name}: {'✅ Available' if name in self.specialist_agents else '⏳ Planned (will use placeholder)'}"
+            f"- {name}: {'✅ AVAILABLE (Has data access)' if name in self.specialist_agents else '⏳ Placeholder'}"
             for name in self.SPECIALIST_AGENTS.keys()
         ])
         
-        prompt = f"""You are a ReAct-based Research Orchestrator using iterative reasoning and acting.
+        # Get already called agents
+        called_agents = self.trace.get_specialist_calls()
+        
+        prompt = f"""You are a ReAct-based Research Orchestrator using iterative reasoning.
 
 USER QUERY:
 {user_query}
@@ -267,41 +267,53 @@ CURRENT ITERATION: {iteration}/{self.max_iterations}
 AVAILABLE SPECIALIST AGENTS:
 {agents_list}
 
-AGENT AVAILABILITY:
+AGENT STATUS:
 {available_agents_status}
 
-PREVIOUS ACTIONS & OBSERVATIONS:
-{history if history else "[No previous actions - this is the first iteration]"}
+ALREADY CALLED: {', '.join(called_agents) if called_agents else 'None'}
 
-REACT FRAMEWORK:
-You must follow the Thought → Action → Observation loop.
+PREVIOUS HISTORY:
+{history if history else "[First iteration - no previous actions]"}
 
-Your task is to THINK about:
-1. What information do we have so far?
-2. What information is still missing to answer the user's query?
-3. Which specialist agent(s) should we call next, if any?
-4. Are we ready to synthesize a final answer?
+🎯 ORCHESTRATION STRATEGY:
+
+1. **Iteration {iteration}/{self.max_iterations}**: You should generally use ALL {self.max_iterations} iterations for comprehensive analysis
+
+2. **When to call specialists**:
+   - If Business Analyst is AVAILABLE (✅), you MUST call it for document-based queries
+   - Call different specialists for different perspectives
+   - Each specialist provides unique insights from their domain
+
+3. **When to finish**:
+   - Only after calling at least 2-3 specialist agents
+   - Only on iteration 4 or 5
+   - Only when comprehensive analysis is complete
+
+4. **This iteration ({iteration})**: 
+   {'- First iteration: Start with Business Analyst if available for foundational analysis' if iteration == 1 else ''}
+   {'- Middle iterations: Call additional specialists for different angles' if 1 < iteration < self.max_iterations else ''}
+   {'- Final iterations: Consider if more analysis needed or ready to finish' if iteration >= self.max_iterations - 1 else ''}
 
 AVAILABLE ACTIONS:
-- call_specialist: Call a specialist agent with a specific task
-- finish: We have enough information, proceed to synthesis
+- call_specialist: Call a specialist agent (recommended for iterations 1-4)
+- finish: Complete and synthesize (only use on iteration 4-5 after calling agents)
+
+⚠️ IMPORTANT:
+- Business Analyst has RAG access to actual 10-K documents via ChromaDB
+- Don't finish early - use the full {self.max_iterations} iterations
+- Each specialist provides unique value
+- Comprehensive research requires multiple perspectives
 
 RESPOND IN THIS JSON FORMAT:
 {{
-  "thought": "Your reasoning about current state and what to do next",
+  "thought": "Your reasoning about what to do in iteration {iteration}",
   "action": "call_specialist" | "finish",
-  "agent_name": "agent_name" (only if action is call_specialist),
-  "task_description": "specific task" (only if action is call_specialist),
-  "reasoning": "Why this action makes sense given the query and history"
+  "agent_name": "agent_name" (required if action is call_specialist),
+  "task_description": "specific task for the agent" (required if action is call_specialist),
+  "reasoning": "Why this action for iteration {iteration}/{self.max_iterations}"
 }}
 
-REMEMBER:
-- Don't call the same agent twice for the same information
-- If you have enough information from previous iterations, choose 'finish'
-- Be efficient - don't over-orchestrate
-- Consider query complexity when deciding number of agents
-
-Provide ONLY valid JSON, no other text."""
+Provide ONLY valid JSON."""
         return prompt
     
     def _reason(self, user_query: str, iteration: int) -> Action:
@@ -314,11 +326,10 @@ Provide ONLY valid JSON, no other text."""
         messages = [{"role": "user", "content": prompt}]
         
         try:
-            # Use sonar-pro for reasoning (better for complex tasks)
-            response = self.client.chat(messages, model="sonar-pro", temperature=0.1)
+            # Use sonar-pro for reasoning
+            response = self.client.chat(messages, model="sonar-pro", temperature=0.2)
         except Exception as e:
             print(f"   ⚠️ Error calling Perplexity API: {str(e)}")
-            # Fallback: finish and synthesize
             self.trace.add_thought(f"API error: {str(e)}", iteration)
             return Action(action_type=ActionType.FINISH)
         
@@ -335,7 +346,7 @@ Provide ONLY valid JSON, no other text."""
             # Store thought
             thought_content = data.get("thought", "")
             self.trace.add_thought(thought_content, iteration)
-            print(f"   💭 {thought_content}")
+            print(f"   💭 {thought_content[:150]}..." if len(thought_content) > 150 else f"   💭 {thought_content}")
             
             # Create action
             action_type = ActionType(data["action"])
@@ -349,14 +360,13 @@ Provide ONLY valid JSON, no other text."""
             print(f"   ⚡ Action: {action.action_type.value}")
             if action.agent_name:
                 print(f"      Agent: {action.agent_name}")
-                print(f"      Task: {action.task_description}")
+                print(f"      Task: {action.task_description[:100]}..." if len(action.task_description or "") > 100 else f"      Task: {action.task_description}")
             
             return action
             
         except Exception as e:
             print(f"   ⚠️ Error parsing reasoning: {e}")
-            print(f"   Raw response: {response[:200]}")
-            # Fallback: finish and synthesize
+            print(f"   Raw response: {response[:300]}...")
             self.trace.add_thought(f"Parse error, proceeding to synthesis", iteration)
             return Action(action_type=ActionType.FINISH)
     
@@ -374,7 +384,6 @@ Provide ONLY valid JSON, no other text."""
             )
         
         elif action.action_type == ActionType.SYNTHESIZE:
-            # This will be handled by the main loop
             return Observation(
                 action=action,
                 result="Ready to synthesize",
@@ -403,22 +412,33 @@ Provide ONLY valid JSON, no other text."""
             agent = self.specialist_agents[agent_name]
             try:
                 result = agent.analyze(task)
-                print(f"   ✅ {agent_name} completed")
+                print(f"   ✅ {agent_name} completed ({len(result)} chars)")
                 return result
             except Exception as e:
                 print(f"   ❌ {agent_name} error: {e}")
+                import traceback
+                traceback.print_exc()
                 return f"Error executing {agent_name}: {str(e)}"
         else:
             # Placeholder for unimplemented agents
             print(f"   ⏳ {agent_name} not yet implemented - using placeholder")
-            result = f"[{agent_name.upper()} - PLACEHOLDER]\n"
-            result += f"Would analyze: {task}\n"
-            result += "This agent will be implemented in future versions."
+            result = f"[{agent_name.upper()} ANALYSIS - PLACEHOLDER]\n\n"
+            result += f"Task: {task}\n\n"
+            result += f"This specialist would analyze: {task}\n\n"
+            result += "Key insights would include:\n"
+            result += "- Detailed domain-specific analysis\n"
+            result += "- Data-driven recommendations\n"
+            result += "- Expert interpretation\n\n"
+            result += "Note: This agent will be fully implemented in future versions.\n"
             return result
     
     def _synthesize(self, user_query: str) -> str:
         """Synthesize all observations into final report"""
-        print(f"\n📊 [SYNTHESIS] Combining insights from {len(self.trace.observations)} observations...")
+        num_obs = len(self.trace.observations)
+        specialist_calls = self.trace.get_specialist_calls()
+        
+        print(f"\n📊 [SYNTHESIS] Combining insights from {num_obs} observations...")
+        print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
         
         # Gather all specialist outputs
         specialist_outputs = []
@@ -431,67 +451,114 @@ Provide ONLY valid JSON, no other text."""
                 })
         
         if not specialist_outputs:
-            return "Unable to generate report. No specialist agent outputs available."
+            print("   ⚠️ No specialist outputs found - generating report from reasoning only")
+            # Fallback synthesis from reasoning
+            reasoning_summary = "\n".join([
+                f"{i+1}. {thought.content}"
+                for i, thought in enumerate(self.trace.thoughts)
+            ])
+            return f"""## Analysis Summary
+
+Based on the ReAct reasoning process, here's what was determined:
+
+{reasoning_summary}
+
+## Note
+
+This report was generated without calling specialist agents. For more detailed analysis:
+- Ensure Business Analyst agent is registered with document access
+- Try more complex queries that require deep document analysis
+- Allow more iterations for comprehensive multi-agent orchestration
+"""
         
-        # Create synthesis prompt
+        # Create synthesis prompt with specialist outputs
         outputs_text = "\n\n".join([
-            f"=== {output['agent'].upper().replace('_', ' ')} ==="
-            f"\nTask: {output['task']}"
-            f"\nResult:\n{output['result']}\n"
-            f"{'=' * 60}"
+            f"{'='*60}\n"
+            f"AGENT: {output['agent'].upper().replace('_', ' ')}\n"
+            f"{'='*60}\n"
+            f"Task: {output['task']}\n\n"
+            f"Analysis:\n{output['result']}\n"
             for output in specialist_outputs
         ])
         
         reasoning_summary = "\n".join([
-            f"{i+1}. {thought.content}"
+            f"{i+1}. Iteration {thought.iteration}: {thought.content[:200]}..."
             for i, thought in enumerate(self.trace.thoughts)
         ])
         
-        prompt = f"""You are a Senior Equity Research Analyst synthesizing insights from a multi-agent research process.
+        prompt = f"""You are a Senior Equity Research Analyst synthesizing a multi-agent research report.
 
 ORIGINAL QUERY:
 {user_query}
 
-REACT REASONING PROCESS:
+REACT REASONING TRACE ({len(self.trace.thoughts)} iterations):
 {reasoning_summary}
 
-SPECIALIST AGENT OUTPUTS:
+SPECIALIST AGENT OUTPUTS ({len(specialist_outputs)} specialists):
+
 {outputs_text}
 
-YOUR TASK:
-1. Synthesize all specialist insights into a coherent, comprehensive report
-2. Maintain citations and data provenance from source agents
-3. Identify key themes and cross-validate findings
-4. Provide actionable insights
-5. Highlight any gaps or contradictions
+YOUR SYNTHESIS TASK:
 
-REPORT STRUCTURE:
+1. **Integrate all specialist insights** into a coherent narrative
+2. **Cross-validate findings** across different specialist perspectives  
+3. **Highlight key insights** supported by multiple sources
+4. **Identify any gaps or contradictions** in the analysis
+5. **Provide actionable conclusions** based on the comprehensive research
+
+REQUIRED REPORT STRUCTURE:
+
 ## Executive Summary
-[2-3 sentences capturing key findings]
+[3-4 sentences capturing the most important findings across all specialists]
 
 ## Detailed Analysis
-[Organized by theme, integrating insights from multiple agents]
+[Organized by key themes, integrating insights from multiple agents. Each theme should reference which specialists provided supporting evidence]
 
-## Key Metrics & Data Points
-[Important quantitative findings with sources]
+### [Theme 1]
+[Synthesis of relevant specialist insights]
+
+### [Theme 2]
+[Synthesis of relevant specialist insights]
+
+## Key Findings & Metrics
+[Bullet points of critical data, ratios, and quantitative insights with sources]
 
 ## Risk Factors & Considerations
-[Critical risks identified]
+[Consolidated risks identified by specialists]
 
-## Conclusion
-[Balanced assessment and implications]
+## Conclusion & Recommendations
+[Balanced final assessment with actionable insights]
 
-Provide a professional, well-structured equity research report."""
+---
+
+**Important**: 
+- Cite which specialist provided each insight (e.g., "Business Analyst identified...", "According to the Quantitative Analysis...")
+- Don't just concatenate - synthesize and integrate across sources
+- Professional equity research tone
+- Be specific with data and evidence
+
+Provide the complete synthesis report now."""
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            # Use sonar-pro for synthesis (better quality)
+            # Use sonar-deep-research for comprehensive synthesis
+            print("   🔄 Generating synthesis with sonar-deep-research...")
             final_report = self.client.chat(messages, model="sonar-pro", temperature=0.3)
             print("   ✅ Synthesis complete")
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            return f"Error generating synthesis: {str(e)}\n\nPartial information gathered:\n{outputs_text}"
+            # Fallback: return raw specialist outputs
+            return f"""## Research Report
+
+**Note**: Synthesis failed, presenting raw specialist outputs.
+
+{outputs_text}
+
+---
+
+**Error during synthesis**: {str(e)}
+"""
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop: Iteratively reason and act until task is complete"""
@@ -500,6 +567,7 @@ Provide a professional, well-structured equity research report."""
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"\n🔄 Max Iterations: {self.max_iterations}")
+        print(f"📊 Registered Agents: {', '.join(self.specialist_agents.keys())}")
         
         # Reset trace for new query
         self.trace = ReActTrace()
@@ -519,11 +587,12 @@ Provide a professional, well-structured equity research report."""
             self.trace.add_observation(observation)
             
             # Step 3: Observe & Decide if done
-            print(f"\n👁️ [OBSERVATION] {observation.result[:150]}..." if len(observation.result) > 150 else f"\n👁️ [OBSERVATION] {observation.result}")
+            obs_preview = observation.result[:150] + "..." if len(observation.result) > 150 else observation.result
+            print(f"\n👁️ [OBSERVATION] {obs_preview}")
             
             # Check if we should finish
             if action.action_type in [ActionType.FINISH, ActionType.SYNTHESIZE]:
-                print("\n🎯 ReAct loop complete - proceeding to synthesis")
+                print(f"\n🎯 ReAct loop ending at iteration {iteration}/{self.max_iterations}")
                 break
         
         # Final synthesis
@@ -532,6 +601,16 @@ Provide a professional, well-structured equity research report."""
         print("="*70)
         
         final_report = self._synthesize(user_query)
+        
+        # Summary stats
+        print("\n" + "="*70)
+        print("📈 ORCHESTRATION SUMMARY")
+        print("="*70)
+        print(f"Iterations completed: {len(self.trace.thoughts)}")
+        print(f"Specialists called: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
+        print(f"Total observations: {len(self.trace.observations)}")
+        print("="*70)
+        
         return final_report
     
     def get_trace_summary(self) -> str:
