@@ -2,8 +2,7 @@
 """
 ReAct-based Multi-Agent Orchestrator
 
-Simplified version using rule-based orchestration instead of Perplexity JSON responses.
-This avoids Perplexity refusing to act as an orchestrator.
+Rule-based orchestration with LOCAL LLM synthesis (no web search interference).
 """
 
 import os
@@ -82,79 +81,51 @@ class ReActTrace:
         return [action.agent_name for action in self.actions if action.action_type == ActionType.CALL_SPECIALIST and action.agent_name]
 
 
-class PerplexityClient:
-    """Client for Perplexity API interactions (used only for synthesis)"""
+class OllamaClient:
+    """Client for local Ollama LLM (no web search)"""
     
-    VALID_MODELS = {
-        "sonar": "Fast, cost-efficient search and Q&A (128k context)",
-        "sonar-pro": "Deep retrieval for complex queries (200k context)",
-        "sonar-reasoning": "Multi-step reasoning (128k context)",
-    }
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen2.5:7b"):
+        self.base_url = base_url
+        self.model = model
     
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
-        if not self.api_key:
-            raise ValueError("PERPLEXITY_API_KEY not found. Please provide API key.")
-        
-        self.base_url = "https://api.perplexity.ai/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-    
-    def chat(self, messages: List[Dict[str, str]], model: str = "sonar", temperature: float = 0.2) -> str:
-        """Send chat request to Perplexity API"""
-        if model not in self.VALID_MODELS:
-            print(f"⚠️ Warning: Model '{model}' not in known list. Using 'sonar' instead.")
-            model = "sonar"
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.3) -> str:
+        """Send chat request to Ollama API"""
+        url = f"{self.base_url}/api/chat"
         
         payload = {
-            "model": model,
+            "model": self.model,
             "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 2000
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": 3000
+            }
         }
         
         try:
-            response = requests.post(
-                self.base_url,
-                json=payload,
-                headers=self.headers,
-                timeout=60
-            )
-            
-            if response.status_code == 400:
-                error_data = response.json()
-                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
-                raise Exception(f"Bad Request (400): {error_msg}")
-            elif response.status_code == 401:
-                raise Exception("Unauthorized (401): Invalid API key")
-            elif response.status_code == 429:
-                raise Exception("Rate Limit (429): Too many requests")
-            
+            response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             result = response.json()
-            return result["choices"][0]["message"]["content"]
-            
+            return result["message"]["content"]
         except Exception as e:
-            raise Exception(f"Perplexity API error: {str(e)}")
+            raise Exception(f"Ollama API error: {str(e)}")
     
     def test_connection(self) -> bool:
         try:
-            print("🔌 Testing Perplexity API connection...")
-            messages = [{"role": "user", "content": "Say 'OK' if you can read this."}]
-            response = self.chat(messages, model="sonar", temperature=0.0)
+            print("🔌 Testing Ollama connection...")
+            messages = [{"role": "user", "content": "Say 'OK'."}]
+            response = self.chat(messages, temperature=0.0)
             if response:
-                print("✅ Connection successful!")
+                print("✅ Ollama connected!")
                 return True
             return False
         except Exception as e:
-            print(f"❌ Connection failed: {str(e)}")
+            print(f"❌ Ollama connection failed: {str(e)}")
             return False
 
 
 class ReActOrchestrator:
-    """Rule-based orchestrator with Perplexity for synthesis only"""
+    """Rule-based orchestrator with LOCAL synthesis (no web interference)"""
     
     SPECIALIST_AGENTS = {
         "business_analyst": {
@@ -175,12 +146,8 @@ class ReActOrchestrator:
         },
     }
     
-    def __init__(self, perplexity_api_key: str = None, max_iterations: int = 3):
-        try:
-            self.client = PerplexityClient(perplexity_api_key)
-        except ValueError as e:
-            raise ValueError(f"Failed to initialize Perplexity client: {str(e)}")
-        
+    def __init__(self, ollama_url: str = "http://localhost:11434", max_iterations: int = 2):
+        self.client = OllamaClient(base_url=ollama_url)
         self.max_iterations = max_iterations
         self.specialist_agents = {}
         self.trace = ReActTrace()
@@ -195,20 +162,20 @@ class ReActOrchestrator:
     
     def _reason_rule_based(self, user_query: str, iteration: int) -> Action:
         """
-        RULE-BASED REASONING (no Perplexity JSON)
+        RULE-BASED REASONING
         
         Simple rules:
-        - Iteration 1-2: Call business_analyst if available
-        - Iteration 3: Finish and synthesize
+        - Iteration 1: Call business_analyst
+        - Iteration 2: Finish and synthesize
         """
         print(f"\n🧠 [THOUGHT {iteration}] Rule-based reasoning...")
         
         query_lower = user_query.lower()
         called_agents = self.trace.get_specialist_calls()
         
-        # Rule 1: Always call business_analyst first if available and not yet called
+        # Rule 1: Always call business_analyst first
         if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents:
-            thought = "Business Analyst has document access - calling first for foundational analysis"
+            thought = "Calling Business Analyst for document-based analysis"
             self.trace.add_thought(thought, iteration)
             print(f"   💭 {thought}")
             
@@ -219,33 +186,14 @@ class ReActOrchestrator:
                 reasoning="Rule 1: Business Analyst first"
             )
         
-        # Rule 2: If business_analyst called once, call again with refined query
-        if iteration == 2 and "business_analyst" in self.specialist_agents:
-            thought = "Getting additional perspectives from Business Analyst"
-            self.trace.add_thought(thought, iteration)
-            print(f"   💭 {thought}")
-            
-            refined_query = f"Provide detailed analysis of: {user_query}"
-            if "risk" in query_lower:
-                refined_query += " Focus on risk factors, regulatory concerns, and vulnerabilities."
-            if "compet" in query_lower:
-                refined_query += " Focus on competitive dynamics, market positioning, and rivals."
-            
-            return Action(
-                action_type=ActionType.CALL_SPECIALIST,
-                agent_name="business_analyst",
-                task_description=refined_query,
-                reasoning="Rule 2: Refined analysis"
-            )
-        
-        # Rule 3: After 2 calls or iteration 3+, finish
-        thought = f"Sufficient analysis gathered, ready to synthesize (iteration {iteration})"
+        # Rule 2: Finish after first call
+        thought = f"Analysis complete, ready to synthesize"
         self.trace.add_thought(thought, iteration)
         print(f"   💭 {thought}")
         
         return Action(
             action_type=ActionType.FINISH,
-            reasoning="Rule 3: Finish after sufficient iterations"
+            reasoning="Rule 2: Finish after analysis"
         )
     
     def _execute_action(self, action: Action) -> Observation:
@@ -297,9 +245,7 @@ class ReActOrchestrator:
     def _extract_document_sources(self, specialist_outputs: List[Dict]) -> Dict[int, str]:
         """
         Extract document sources from specialist outputs
-        Supports multiple formats:
-        - --- SOURCE: filename.pdf (Page X) ---
-        - **Source:** [filename.pdf, Page X]
+        Supports: --- SOURCE: filename.pdf (Page X) ---
         """
         document_sources = {}
         citation_num = 1
@@ -307,9 +253,11 @@ class ReActOrchestrator:
         for output in specialist_outputs:
             content = output['result']
             
-            # Pattern 1: --- SOURCE: filename (Page X) ---
-            pattern1 = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
-            sources = re.findall(pattern1, content, re.IGNORECASE)
+            # Pattern: --- SOURCE: filename (Page X) ---
+            pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            sources = re.findall(pattern, content, re.IGNORECASE)
+            
+            print(f"   🔍 DEBUG: Found {len(sources)} SOURCE markers in {output['agent']} output")
             
             for filename, page in sources:
                 filename = filename.strip()
@@ -318,31 +266,13 @@ class ReActOrchestrator:
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
+                    print(f"      [{citation_num}] {source_key}")
                     citation_num += 1
-            
-            # Pattern 2: **Source:** [filename, Page X]
-            pattern2 = r'\*\*Source:\*\*\s*\[([^,]+),\s*Page\s*([^\]]+)\]'
-            sources2 = re.findall(pattern2, content, re.IGNORECASE)
-            
-            for filename, page in sources2:
-                filename = filename.strip()
-                page = page.strip()
-                source_key = f"{filename} - Page {page}"
-                
-                if source_key not in document_sources.values():
-                    document_sources[citation_num] = source_key
-                    citation_num += 1
-            
-            # If no sources found, add placeholder
-            if not sources and not sources2 and "PLACEHOLDER" in content:
-                agent_name = output['agent'].replace('_', ' ').title()
-                document_sources[citation_num] = f"{agent_name} (Placeholder Analysis)"
-                citation_num += 1
         
         return document_sources
     
     def _synthesize(self, user_query: str) -> str:
-        """Synthesize with Perplexity (as synthesis tool, not orchestrator)"""
+        """Synthesize with LOCAL LLM (no web search)"""
         specialist_calls = self.trace.get_specialist_calls()
         
         print(f"\n📊 [SYNTHESIS] Combining insights...")
@@ -364,53 +294,88 @@ class ReActOrchestrator:
         document_sources = self._extract_document_sources(specialist_outputs)
         print(f"   📚 Found {len(document_sources)} unique document sources")
         
-        # Build synthesis prompt
+        if len(document_sources) == 0:
+            print("   ⚠️ WARNING: No document sources found! Check if Business Analyst is preserving SOURCE markers.")
+        
+        # Replace SOURCE markers with citation numbers
+        outputs_with_cites = []
+        for output in specialist_outputs:
+            content = output['result']
+            
+            def replace_source(match):
+                filename = match.group(1).strip()
+                page = match.group(2).strip()
+                source_key = f"{filename} - Page {page}"
+                
+                for num, doc in document_sources.items():
+                    if doc == source_key:
+                        return f" [SOURCE-{num}]"
+                return match.group(0)
+            
+            pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            content_with_cites = re.sub(pattern, replace_source, content, flags=re.IGNORECASE)
+            
+            outputs_with_cites.append({
+                'agent': output['agent'],
+                'content': content_with_cites
+            })
+        
+        # Build specialist analysis for prompt
         outputs_text = "\n\n".join([
-            f"{'='*60}\nSPECIALIST: {output['agent'].upper()}\n{'='*60}\n{output['result']}"
-            for output in specialist_outputs
+            f"{'='*60}\n{output['content']}"
+            for output in outputs_with_cites
         ])
         
+        # Create document reference list
         references_list = "\n".join([
-            f"[{num}] {doc}"
+            f"[SOURCE-{num}] = {doc}"
             for num, doc in sorted(document_sources.items())
         ])
         
-        prompt = f"""Synthesize a comprehensive equity research report.
+        prompt = f"""You are an equity research analyst synthesizing document-based analysis.
 
-QUERY: {user_query}
+USER QUERY: {user_query}
 
-SPECIALIST ANALYSIS:
+SPECIALIST ANALYSIS (with SOURCE citations):
 {outputs_text}
 
-DOCUMENT SOURCES:
+DOCUMENT REFERENCE MAP:
 {references_list}
 
-Create a report with:
-1. Executive Summary (3-4 sentences)
-2. Detailed Analysis (by theme)
-3. Key Findings
-4. Risk Factors
-5. Conclusion
-6. References section
+INSTRUCTIONS:
+1. Synthesize a comprehensive research report
+2. Structure: Executive Summary, Detailed Analysis, Key Findings, Risk Factors, Conclusion, References
+3. CRITICAL: When citing facts, replace [SOURCE-X] with [X] (e.g., [SOURCE-1] becomes [1])
+4. DO NOT add new web-based citations - ONLY use the SOURCE citations provided
+5. End with a References section listing all [1], [2], [3]... as "[1] APPL 10-k Filings.pdf - Page 23"
+6. If no SOURCE citations are present, note that analysis is not document-backed
 
-Cite facts using [1], [2], [3] matching the document sources above.
-DO NOT cite specialists - cite the actual source documents.
-"""
+Synthesize now:"""
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            print("   🔄 Generating synthesis with Perplexity...")
-            final_report = self.client.chat(messages, model="sonar", temperature=0.3)
+            print("   🔄 Generating synthesis with local LLM...")
+            final_report = self.client.chat(messages, temperature=0.3)
             print("   ✅ Synthesis complete")
+            
+            # Post-process: Ensure References section exists
+            if len(document_sources) > 0 and "## References" not in final_report and "## 📚 References" not in final_report:
+                refs = "\n\n## 📚 References\n\n" + "\n".join([
+                    f"[{num}] {doc}"
+                    for num, doc in sorted(document_sources.items())
+                ])
+                final_report += refs
+            
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 References\n\n{references_list}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
+            # Fallback: return raw with sources
+            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 Document Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Rule-Based)")
+        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Local LLM)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -423,7 +388,6 @@ DO NOT cite specialists - cite the actual source documents.
             print(f"ITERATION {iteration}/{self.max_iterations}")
             print("-"*70)
             
-            # Rule-based reasoning (no Perplexity)
             action = self._reason_rule_based(user_query, iteration)
             self.trace.add_action(action)
             
@@ -457,22 +421,18 @@ DO NOT cite specialists - cite the actual source documents.
 
 
 def main():
-    api_key = os.getenv("PERPLEXITY_API_KEY")
-    if not api_key:
-        print("⚠️ Please set PERPLEXITY_API_KEY")
-        return
-    
     try:
-        orchestrator = ReActOrchestrator(max_iterations=3)
+        orchestrator = ReActOrchestrator(max_iterations=2)
         
         if not orchestrator.test_connection():
-            print("\n❌ Failed to connect")
+            print("\n❌ Failed to connect to Ollama")
+            print("\n💡 Make sure Ollama is running: ollama serve")
             return
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Rule-Based Orchestrator Ready")
+    print("\n🚀 Local LLM Orchestrator Ready")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
