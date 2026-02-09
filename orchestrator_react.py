@@ -131,22 +131,31 @@ class ReActOrchestrator:
         "business_analyst": {
             "description": "Analyzes 10-K filings, financial statements, competitive positioning using RAG",
             "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "financial"],
+            "priority": 1  # Always first
+        },
+        "web_search_agent": {
+            "description": "Supplements document analysis with current web info (news, market data, analyst opinions)",
+            "keywords": ["recent", "current", "latest", "news", "market", "price"],
+            "priority": 2  # Always after business_analyst
         },
         "quantitative_analyst": {
             "description": "Performs quantitative analysis, ratios, valuation metrics",
             "keywords": ["ratio", "P/E", "margin", "DCF", "valuation", "CAGR"],
+            "priority": 3
         },
         "market_analyst": {
             "description": "Tracks market sentiment, technical indicators, price movements",
             "keywords": ["sentiment", "price", "stock", "volume", "technical"],
+            "priority": 3
         },
         "industry_analyst": {
             "description": "Provides sector insights, trends, regulatory landscape",
             "keywords": ["industry", "sector", "peers", "competitors", "market share"],
+            "priority": 3
         },
     }
     
-    def __init__(self, ollama_url: str = "http://localhost:11434", max_iterations: int = 2):
+    def __init__(self, ollama_url: str = "http://localhost:11434", max_iterations: int = 3):
         self.client = OllamaClient(base_url=ollama_url)
         self.max_iterations = max_iterations
         self.specialist_agents = {}
@@ -164,18 +173,19 @@ class ReActOrchestrator:
         """
         RULE-BASED REASONING
         
-        Simple rules:
-        - Iteration 1: Call business_analyst
-        - Iteration 2: Finish and synthesize
+        Rules:
+        - Iteration 1: Call business_analyst (document analysis)
+        - Iteration 2: Call web_search_agent (supplement with web data)
+        - Iteration 3: Finish and synthesize
         """
         print(f"\n🧠 [THOUGHT {iteration}] Rule-based reasoning...")
         
         query_lower = user_query.lower()
         called_agents = self.trace.get_specialist_calls()
         
-        # Rule 1: Always call business_analyst first
+        # 🟢 Rule 1: ALWAYS call business_analyst first (if available)
         if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents:
-            thought = "Calling Business Analyst for document-based analysis"
+            thought = "Starting with Business Analyst for document-based analysis"
             self.trace.add_thought(thought, iteration)
             print(f"   💭 {thought}")
             
@@ -183,17 +193,37 @@ class ReActOrchestrator:
                 action_type=ActionType.CALL_SPECIALIST,
                 agent_name="business_analyst",
                 task_description=user_query,
-                reasoning="Rule 1: Business Analyst first"
+                reasoning="Rule 1: Business Analyst provides foundational document analysis"
             )
         
-        # Rule 2: Finish after first call
-        thought = f"Analysis complete, ready to synthesize"
+        # 🟢 Rule 2: Call web_search_agent AFTER business_analyst (if available)
+        if "web_search_agent" in self.specialist_agents and "web_search_agent" not in called_agents and "business_analyst" in called_agents:
+            thought = "Calling Web Search Agent to supplement document analysis with current data"
+            self.trace.add_thought(thought, iteration)
+            print(f"   💭 {thought}")
+            
+            # Get business analyst's output to pass as context
+            business_analyst_output = ""
+            for obs in self.trace.observations:
+                if obs.action.agent_name == "business_analyst":
+                    business_analyst_output = obs.result
+                    break
+            
+            return Action(
+                action_type=ActionType.CALL_SPECIALIST,
+                agent_name="web_search_agent",
+                task_description=user_query,
+                reasoning="Rule 2: Web Search Agent supplements with recent info"
+            )
+        
+        # Rule 3: Finish after both agents called (or max iterations)
+        thought = f"Analysis complete with {len(called_agents)} specialists, ready to synthesize"
         self.trace.add_thought(thought, iteration)
         print(f"   💭 {thought}")
         
         return Action(
             action_type=ActionType.FINISH,
-            reasoning="Rule 2: Finish after analysis"
+            reasoning="Rule 3: Sufficient analysis gathered"
         )
     
     def _execute_action(self, action: Action) -> Observation:
@@ -230,7 +260,19 @@ class ReActOrchestrator:
         if agent_name in self.specialist_agents:
             agent = self.specialist_agents[agent_name]
             try:
-                result = agent.analyze(task)
+                # For web_search_agent, pass prior analysis if available
+                if agent_name == "web_search_agent" and hasattr(agent, 'analyze'):
+                    # Get business analyst output
+                    prior_analysis = ""
+                    for obs in self.trace.observations:
+                        if obs.action.agent_name == "business_analyst":
+                            prior_analysis = obs.result
+                            break
+                    
+                    result = agent.analyze(task, prior_analysis=prior_analysis)
+                else:
+                    result = agent.analyze(task)
+                
                 print(f"   ✅ {agent_name} completed ({len(result)} chars)")
                 return result
             except Exception as e:
@@ -244,25 +286,48 @@ class ReActOrchestrator:
     
     def _extract_document_sources(self, specialist_outputs: List[Dict]) -> Dict[int, str]:
         """
-        Extract document sources from specialist outputs
-        Supports: --- SOURCE: filename.pdf (Page X) ---
+        Extract BOTH document and web sources from specialist outputs
+        
+        Supports:
+        - --- SOURCE: filename.pdf (Page X) ---  (document sources)
+        - --- SOURCE: Title (URL) ---             (web sources)
         """
         document_sources = {}
         citation_num = 1
         
         for output in specialist_outputs:
             content = output['result']
+            agent = output['agent']
             
-            # Pattern: --- SOURCE: filename (Page X) ---
-            pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
-            sources = re.findall(pattern, content, re.IGNORECASE)
+            # Pattern 1: Document sources (filename + page)
+            pattern_doc = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            doc_sources = re.findall(pattern_doc, content, re.IGNORECASE)
             
-            print(f"   🔍 DEBUG: Found {len(sources)} SOURCE markers in {output['agent']} output")
+            # Pattern 2: Web sources (title + URL)
+            pattern_web = r'---\s*SOURCE:\s*([^\(]+)\((https?://[^\)]+)\)\s*---'
+            web_sources = re.findall(pattern_web, content, re.IGNORECASE)
             
-            for filename, page in sources:
+            total_sources = len(doc_sources) + len(web_sources)
+            print(f"   🔍 DEBUG: Found {total_sources} SOURCE markers in {agent} output")
+            print(f"      - Document sources: {len(doc_sources)}")
+            print(f"      - Web sources: {len(web_sources)}")
+            
+            # Add document sources
+            for filename, page in doc_sources:
                 filename = filename.strip()
                 page = page.strip()
                 source_key = f"{filename} - Page {page}"
+                
+                if source_key not in document_sources.values():
+                    document_sources[citation_num] = source_key
+                    print(f"      [{citation_num}] {source_key}")
+                    citation_num += 1
+            
+            # Add web sources
+            for title, url in web_sources:
+                title = title.strip()
+                url = url.strip()
+                source_key = f"{title} - {url}"
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
@@ -290,12 +355,12 @@ class ReActOrchestrator:
         if not specialist_outputs:
             return "## Analysis Summary\n\nNo specialist analysis available."
         
-        # Extract document sources
+        # Extract ALL sources (documents + web)
         document_sources = self._extract_document_sources(specialist_outputs)
-        print(f"   📚 Found {len(document_sources)} unique document sources")
+        print(f"   📚 Found {len(document_sources)} unique sources (documents + web)")
         
         if len(document_sources) == 0:
-            print("   ⚠️ WARNING: No document sources found! Check if Business Analyst is preserving SOURCE markers.")
+            print("   ⚠️ WARNING: No sources found! Check if agents are preserving SOURCE markers.")
         
         # Replace SOURCE markers with citation numbers
         outputs_with_cites = []
@@ -303,17 +368,32 @@ class ReActOrchestrator:
             content = output['result']
             
             def replace_source(match):
-                filename = match.group(1).strip()
-                page = match.group(2).strip()
-                source_key = f"{filename} - Page {page}"
+                # Extract either (Page X) or (URL)
+                full_match = match.group(0)
+                
+                # Try document pattern first
+                if "Page" in full_match:
+                    filename = match.group(1).strip()
+                    page = match.group(2).strip()
+                    source_key = f"{filename} - Page {page}"
+                else:
+                    # Web pattern
+                    title = match.group(1).strip()
+                    url = match.group(2).strip()
+                    source_key = f"{title} - {url}"
                 
                 for num, doc in document_sources.items():
                     if doc == source_key:
                         return f" [SOURCE-{num}]"
                 return match.group(0)
             
-            pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
-            content_with_cites = re.sub(pattern, replace_source, content, flags=re.IGNORECASE)
+            # Replace both patterns
+            content_with_cites = re.sub(
+                r'---\s*SOURCE:\s*([^\(]+)\(([^\)]+)\)\s*---',
+                replace_source,
+                content,
+                flags=re.IGNORECASE
+            )
             
             outputs_with_cites.append({
                 'agent': output['agent'],
@@ -322,7 +402,7 @@ class ReActOrchestrator:
         
         # Build specialist analysis for prompt
         outputs_text = "\n\n".join([
-            f"{'='*60}\n{output['content']}"
+            f"{'='*60}\nSOURCE: {output['agent'].upper()}\n{'='*60}\n{output['content']}"
             for output in outputs_with_cites
         ])
         
@@ -332,54 +412,41 @@ class ReActOrchestrator:
             for num, doc in sorted(document_sources.items())
         ])
         
-        # 🔥 ENHANCEMENT 1: Enhanced prompt for frequent citations
-        prompt = f"""You are an equity research analyst synthesizing document-based analysis.
+        # 🔥 ENHANCED: Synthesis prompt
+        prompt = f"""You are an equity research analyst synthesizing multi-source analysis.
 
 USER QUERY: {user_query}
 
 SPECIALIST ANALYSIS (with SOURCE citations):
 {outputs_text}
 
-DOCUMENT REFERENCE MAP:
+SOURCE REFERENCE MAP (includes BOTH documents AND web sources):
 {references_list}
 
 INSTRUCTIONS:
 1. Synthesize a comprehensive research report
 2. Structure: Executive Summary, Detailed Analysis, Key Findings, Risk Factors, Conclusion, References
 
-3. 🔥 CRITICAL CITATION RULES (ENHANCED):
-   - Replace [SOURCE-X] with [X] in your output (e.g., [SOURCE-1] becomes [1])
-   - CITE FREQUENTLY: Every factual claim, statistic, or risk factor MUST have a citation
-   - Multiple facts in one sentence = multiple citations
-   - Example of GOOD citation density:
-     "Apple's revenue grew 7% YoY [1], driven by iPhone sales of $201B [2]. 
-      The company faces supply chain risks in China [3] and regulatory 
-      pressures in Europe [4]."
-   - Example of BAD citation (avoid this):
-     "Apple's revenue grew, driven by iPhone sales. The company faces 
-      supply chain and regulatory risks."
-   - DO NOT make unsourced claims - if no SOURCE marker exists, note as "analyst assessment"
-   - Aim for at least 1-2 citations per paragraph
+3. 🔥 CRITICAL CITATION RULES:
+   - Replace [SOURCE-X] with [X] (e.g., [SOURCE-1] becomes [1])
+   - CITE FREQUENTLY: Every factual claim needs a citation
+   - Mix document sources (10-K filings) with web sources (news, analysts)
+   - Example: "iPhone revenue is $201B per 10-K [1], while analysts project 15% growth [2]."
+   - DO NOT make unsourced claims
+   - Aim for 1-2 citations per paragraph
 
-4. When discussing financial metrics:
-   - Revenue figures → cite source [X]
-   - Growth rates → cite source [X]
-   - Market share → cite source [X]
-   - Margins → cite source [X]
-   - Product mix → cite source [X]
+4. DISTINGUISH between:
+   - Historical data from documents [X]
+   - Current market data from web [Y]
+   - Note recency: "Per latest 10-K [1]" vs "Recent reports indicate [5]"
 
-5. When discussing risks:
-   - Each risk factor → cite source [X]
-   - Regulatory issues → cite source [X]
-   - Competition → cite source [X]
-   - Supply chain → cite source [X]
+5. End with References section listing ALL [1], [2], [3]... showing both:
+   - "[1] APPL 10-k Filings.pdf - Page 23" (document)
+   - "[5] Bloomberg - https://bloomberg.com/..." (web)
 
-6. End with a References section listing all citations as:
-   "[1] APPL 10-k Filings.pdf - Page 23"
+6. If no SOURCE citations present, note: "Analysis lacks source attribution"
 
-7. If no SOURCE citations are present in specialist analysis, note: "Analysis based on general knowledge (no document citations available)"
-
-Synthesize now with FREQUENT citations:"""
+Synthesize now with FREQUENT mixed citations:"""
         
         try:
             messages = [{"role": "user", "content": prompt}]
@@ -398,13 +465,13 @@ Synthesize now with FREQUENT citations:"""
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            # Fallback: return raw with sources
-            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 Document Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
+            # Fallback
+            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
     
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Local LLM)")
+        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Local LLM + Web)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -451,7 +518,7 @@ Synthesize now with FREQUENT citations:"""
 
 def main():
     try:
-        orchestrator = ReActOrchestrator(max_iterations=2)
+        orchestrator = ReActOrchestrator(max_iterations=3)
         
         if not orchestrator.test_connection():
             print("\n❌ Failed to connect to Ollama")
