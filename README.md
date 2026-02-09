@@ -1,161 +1,163 @@
-# Agent-skills-POC
+# 🔬 Agent-Skills-POC
 
 **Multi-agent equity research system with ReAct (Reasoning + Acting) orchestration.**
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+---
+
 ## 🎯 Quick Start
 
-### Streamlit UI (Easiest - Recommended for New Users)
+### Option 1: Streamlit UI (Recommended)
 
 ```bash
-# 1. Setup
+# 1. Install
 pip install -r requirements.txt
-export PERPLEXITY_API_KEY="your-key"
 
-# 2. Start Ollama
+# 2. Set API keys
+export PERPLEXITY_API_KEY="your-key"
+export EODHD_API_KEY="your-key"  # Optional
+
+# 3. Start Ollama
 ollama serve
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 
-# 3. Run Streamlit UI
+# 4. Launch UI
 streamlit run app.py
-# Opens automatically at http://localhost:8501
+# → Opens at http://localhost:8501
 ```
 
-📖 **See:** [UI_GUIDE.md](UI_GUIDE.md) for complete UI documentation.
-
-### CLI - ReAct Multi-Agent System
+### Option 2: CLI with ReAct
 
 ```bash
-# Same setup as above, then:
+# Same setup, then:
 python main_orchestrated.py
 ```
 
-### CLI - Single Agent Mode
+### Option 3: Single Agent CLI
 
 ```bash
 python main.py
 ```
 
-## 🖥️ Three Ways to Use
-
-| Mode | Best For | Interface |
-|------|----------|----------|
-| **Streamlit UI** | Visual exploration, demos | Web browser at `localhost:8501` |
-| **CLI Multi-Agent** | Development, debugging | Terminal with ReAct trace |
-| **CLI Single Agent** | Quick 10-K analysis | Terminal |
-
-## 🔄 What is ReAct?
-
-**ReAct (Reasoning + Acting)** is an iterative framework where the orchestrator:
-
-1. **Thinks** 💭 - Reasons about what to do next
-2. **Acts** ⚡ - Executes specialist agents  
-3. **Observes** 👁️ - Analyzes results
-4. **Repeats** 🔁 - Refines strategy based on observations
-
-This enables **dynamic adaptation**, **self-correction**, and **early stopping**.
-
-📚 **See:** [REACT_FRAMEWORK.md](REACT_FRAMEWORK.md) for complete documentation.
+---
 
 ## 📁 Project Structure
 
 ```
 Agent-skills-POC/
-├── app.py                           # 🌐 Streamlit UI
-├── main_orchestrated.py             # 🔥 ReAct CLI (multi-agent)
-├── main.py                          # Single agent CLI
-├── orchestrator_react.py            # ReAct orchestration engine
-├── orchestrator.py                  # Legacy planner
+├── README.md                    # You are here
+├── requirements.txt             # Python dependencies
+├── .gitignore
 │
-├── UI_GUIDE.md                      # 📖 Streamlit UI guide
-├── REACT_FRAMEWORK.md               # 📚 ReAct framework guide
-├── SPECIALIST_AGENTS.md             # Agent specifications
-├── ORCHESTRATOR_README.md           # Legacy docs
+├── 🌐 app.py                   # Streamlit UI entry point
+├── 🔥 main_orchestrated.py      # ReAct CLI entry point
+├── main.py                      # Single agent CLI
 │
-├── skills/business_analyst/         # ✅ Implemented specialist
-├── prompts/                         # Persona templates
-├── data/                            # PDF storage
-└── storage/chroma_db/               # Vector DB
+├── 🧠 orchestrator/            # Orchestration engine
+│   ├── __init__.py
+│   ├── react.py                 # ReAct framework
+│   └── legacy.py                # Legacy planner
+│
+├── orchestrator_react.py        # ReAct implementation
+├── orchestrator.py              # Legacy implementation
+│
+├── 🤖 skills/                  # Specialist agents
+│   └── business_analyst/
+│       ├── graph_agent.py       # ✅ Main implementation
+│       ├── agent.py
+│       └── SKILL.md
+│
+├── 📖 docs/                    # Documentation
+│   ├── REACT_FRAMEWORK.md       # ReAct architecture
+│   ├── SPECIALIST_AGENTS.md     # Agent specifications
+│   ├── UI_GUIDE.md              # Streamlit guide
+│   └── ORCHESTRATOR.md          # Orchestration docs
+│
+├── 🎭 prompts/                # Persona templates
+│   ├── chief_strategy_officer.md
+│   ├── competitive_intel.md
+│   └── risk_officer.md
+│
+├── 📂 data/                   # PDF storage (10-Ks by ticker)
+└── 💾 storage/                # Vector database
+    └── chroma_db/
 ```
 
-## 🏗️ ReAct Architecture
+---
+
+## 🔄 What is ReAct?
+
+ReAct (Reasoning + Acting) enables **iterative, adaptive** decision-making:
 
 ```
-User Query
-    ↓
-╭─────────────────────────────────────╮
-│     ReAct Loop (max 5 iterations)   │
-│                                     │
-│  Iteration 1:                       │
-│    💭 Thought → ⚡ Action → 👁️ Observation │
-│                                     │
-│  Iteration 2:                       │  
-│    💭 Thought → ⚡ Action → 👁️ Observation │
-│                                     │
-│  ... (adapts based on results)      │
-│                                     │
-│  Iteration N:                       │
-│    💭 "Sufficient" → 🏁 Finish        │
-╰─────────────────────────────────────╯
-    ↓
-[Synthesis]
-    ↓
-Final Report + Trace
+╭───────────────────────────────────╮
+│   ReAct Loop (max 5 iterations)   │
+│                                   │
+│  1. 🧠 Think → What to do next? │
+│  2. ⚡ Act → Call specialist agent  │
+│  3. 👁️ Observe → Analyze results   │
+│  4. 🔁 Repeat → Until sufficient    │
+╰───────────────────────────────────╯
 ```
 
-**Key Advantages:**
-- ✅ Adaptive - Changes strategy based on observations
-- ✅ Efficient - Stops early when sufficient
-- ✅ Self-correcting - Calls additional agents if needed  
-- ✅ Transparent - Full reasoning trace
+**Advantages:**
+- ✅ **Adaptive** - Changes strategy based on observations
+- ✅ **Efficient** - Stops early when sufficient info gathered
+- ✅ **Self-correcting** - Can call additional agents if needed
+- ✅ **Transparent** - Complete reasoning trace available
+
+📚 **Deep Dive:** [docs/REACT_FRAMEWORK.md](docs/REACT_FRAMEWORK.md)
+
+---
 
 ## 🤖 The 6 Specialist Agents
 
-| Agent | Status | Capabilities |
-|-------|--------|-------------|
-| **Business Analyst** | ✅ | 10-K analysis, risk assessment, competitive intel |
-| **Quantitative Analyst** | 📋 | Financial ratios, DCF, trend forecasting |
-| **Market Analyst** | 📋 | Sentiment, technicals, price data |
-| **Industry Analyst** | 📋 | Sector trends, peer comparison |
-| **ESG Analyst** | 📋 | ESG scoring, sustainability |
-| **Macro Analyst** | 📋 | Economic indicators, FX exposure |
+| Agent | Status | Capabilities | Keywords |
+|-------|--------|--------------|----------|
+| **Business Analyst** | ✅ | 10-K analysis, risk assessment, competitive intel | `10-K`, `risk`, `competitive` |
+| **Quantitative Analyst** | 📋 | Financial ratios, DCF, trend forecasting | `calculate`, `ratio`, `DCF` |
+| **Market Analyst** | 📋 | Sentiment, technicals, price data | `sentiment`, `price`, `technical` |
+| **Industry Analyst** | 📋 | Sector trends, peer comparison | `industry`, `peers`, `sector` |
+| **ESG Analyst** | 📋 | ESG scoring, sustainability | `ESG`, `carbon`, `sustainability` |
+| **Macro Analyst** | 📋 | Economic indicators, FX exposure | `rates`, `FX`, `geopolitical` |
 
-## 🚀 Usage
+📚 **Detailed Specs:** [docs/SPECIALIST_AGENTS.md](docs/SPECIALIST_AGENTS.md)
 
-### Streamlit UI (Recommended)
+---
 
-```bash
-streamlit run app.py
-```
+## 🚀 Usage Examples
+
+### Streamlit UI
+
+1. Run `streamlit run app.py`
+2. Click "🚀 Initialize System"
+3. Type query: "What are Apple's competitive risks?"
+4. Click "🔍 Analyze"
+5. View results + toggle ReAct trace
 
 **Features:**
 - 🖱️ Point-and-click interface
 - 📊 Real-time metrics (iterations, duration)
 - 🔍 Toggle ReAct trace visibility
-- 📚 Query history with expand/collapse
+- 📁 Session history with expand/collapse
 - 💾 Download reports as markdown
-- ⚙️ Adjustable max iterations slider
-- 🎨 Color-coded status indicators
+- ⚙️ Adjustable max iterations
 
-**Screenshot Flow:**
-```
-1. Click "🚀 Initialize System" (sidebar)
-2. Type query in text area
-3. Click "🔍 Analyze"
-4. View results with metrics
-5. Toggle "🔍 Show ReAct Trace" to see reasoning
-6. Download or continue with new queries
-```
+📚 **UI Guide:** [docs/UI_GUIDE.md](docs/UI_GUIDE.md)
 
-### CLI - ReAct Orchestration
+### Python API
 
 ```python
-from orchestrator_react import ReActOrchestrator
+from orchestrator.react import ReActOrchestrator
+from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
 
+# Initialize
 orchestrator = ReActOrchestrator(max_iterations=5)
 
 # Register specialists
-from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
 business_analyst = BusinessAnalystGraphAgent()
 orchestrator.register_specialist("business_analyst", business_analyst)
 
@@ -168,151 +170,278 @@ print(report)
 print(orchestrator.get_trace_summary())  # View reasoning
 ```
 
-**Output:**
+**Output Example:**
 ```
-💭 [THOUGHT 1] Need qualitative risks AND quantitative margins
+🧠 [THOUGHT 1] Need qualitative risks AND quantitative margins
 ⚡ [ACTION 1] call_specialist → business_analyst
 👁️ [OBSERVATION 1] Extracted 5 competitive risks...
 
-💭 [THOUGHT 2] Have risks, need margin calculations
-⚡ [ACTION 2] call_specialist → quantitative_analyst  
+🧠 [THOUGHT 2] Have risks, need margin calculations
+⚡ [ACTION 2] call_specialist → quantitative_analyst
 👁️ [OBSERVATION 2] Net margin 25.3%, Operating 30.1%...
 
-💭 [THOUGHT 3] Sufficient information gathered
+🧠 [THOUGHT 3] Sufficient information gathered
 ⚡ [ACTION 3] finish
 ```
 
-## 📊 ReAct vs Traditional
+---
 
-| Feature | Traditional | ReAct |
-|---------|-------------|-------|
-| Planning | One-shot | Iterative |
-| Adaptation | ❌ No | ✅ Yes |
-| Self-correct | ❌ No | ✅ Yes |
-| Early stop | ❌ No | ✅ Yes |
-| Transparency | Limited | Full trace |
-| Efficiency | Fixed | Variable (2-5 iter) |
+## 🏗️ Architecture
 
-**Example:** Query "What does Apple do?"
+### System Overview
 
-- **Traditional:** Calls 3-4 agents (overkill)
-- **ReAct:** 2 iterations → Business Analyst → Finish
-- **Result:** 2x faster
+```
+╭───────────────────────────────────────────────────────╮
+│                    USER LAYER                         │
+│                                                       │
+│  🌐 Streamlit UI  │  💻 CLI (ReAct)  │  💻 CLI (Single) │
+│      (app.py)      │ (main_orchestrated) │   (main.py)    │
+╰───────────────────────────────────────────────────────╯
+                         │
+                         ↓
+╭───────────────────────────────────────────────────────╮
+│              ORCHESTRATION LAYER                        │
+│                                                       │
+│  🧠 ReAct Orchestrator (orchestrator/react.py)       │
+│  - Iterative reasoning: Think → Act → Observe         │
+│  - Dynamic agent selection                             │
+│  - Self-correction & early stopping                    │
+╰───────────────────────────────────────────────────────╯
+                         │
+                         ↓
+╭───────────────────────────────────────────────────────╮
+│               SPECIALIST AGENTS LAYER                   │
+│                                                       │
+│  🤖 Business Analyst      (skills/business_analyst/)  │
+│  📊 Quantitative Analyst  (📋 planned)                 │
+│  💹 Market Analyst        (📋 planned)                 │
+│  🏗️ Industry Analyst      (📋 planned)                 │
+│  🌱 ESG Analyst           (📋 planned)                 │
+│  🌍 Macro Analyst         (📋 planned)                 │
+╰───────────────────────────────────────────────────────╯
+                         │
+                         ↓
+╭───────────────────────────────────────────────────────╮
+│                 DATA LAYER                            │
+│                                                       │
+│  💾 ChromaDB Vector Store  (storage/chroma_db/)       │
+│  📂 PDF Documents         (data/)                      │
+│  🎭 Persona Templates      (prompts/)                   │
+│  🌐 External APIs         (Perplexity, EODHD)          │
+╰───────────────────────────────────────────────────────╯
+```
 
-## 🧠 Key Features
+### ReAct vs Traditional
 
-### Business Analyst (✅ Implemented)
-- ReAct loop with LangGraph
-- ChromaDB + BERT reranking
-- Persona-based analysis
-- Page-level citations
+| Feature | Traditional Planner | ReAct Framework |
+|---------|--------------------|-----------------|
+| **Planning** | One-shot (fixed) | Iterative (adaptive) |
+| **Agent Selection** | All predetermined | Dynamic per iteration |
+| **Self-Correction** | ❌ No | ✅ Yes |
+| **Early Stopping** | ❌ No | ✅ Yes |
+| **Reasoning Transparency** | Limited | Full trace available |
+| **Efficiency** | Fixed cost | Variable (2-5 iterations avg) |
 
-### ReAct Orchestration (✅ Implemented)
-- Iterative reasoning: Think → Act → Observe
-- Dynamic agent selection
-- Self-correction capabilities
-- Early stopping optimization
-- Complete reasoning trace
-- Context-aware synthesis
-
-### Streamlit UI (✅ Implemented)
-- Interactive web interface
-- Real-time progress tracking
-- Visual ReAct trace display
-- Session-based history
-- Markdown report download
-- Responsive design
+---
 
 ## 🛠️ Tech Stack
 
-**Core:** LangGraph, LangChain, Ollama (Qwen 2.5), ChromaDB, Perplexity API
+### Core
+- **LangGraph** - Agent workflow orchestration
+- **LangChain** - LLM framework
+- **Ollama** - Local LLM inference (Qwen 2.5:7b)
+- **ChromaDB** - Vector storage
+- **Perplexity API** - ReAct reasoning & synthesis
+- **Streamlit** - Web UI
 
-**UI:** Streamlit
+### ML/NLP
+- **BERT Cross-Encoder** - Document reranking
+- **Nomic Embeddings** - Text embeddings
+- **Sentence Transformers** - Similarity search
 
-**ML/NLP:** BERT Cross-Encoder, Nomic Embeddings, Sentence Transformers
+### Data & APIs
+- **PyPDF** - Document loading
+- **Pandas** - Data analysis
+- **EODHD API** - Market data (optional)
 
-**Data:** PyPDF, Pandas, EODHD API
+---
 
 ## 📈 Performance
 
-- **Single Agent:** ~15-30s
-- **ReAct Simple (1-2 agents):** ~30-45s
-- **ReAct Complex (3-4 agents):** ~50-70s
-- **Per iteration:** ~8-12s
-- **Synthesis:** ~10-15s
+| Metric | Value |
+|--------|-------|
+| Single Agent | ~15-30s |
+| ReAct Simple (1-2 agents) | ~30-45s |
+| ReAct Complex (3-4 agents) | ~50-70s |
+| Per Iteration Overhead | ~8-12s |
+| Synthesis | ~10-15s |
 
-**Efficiency:** ReAct saves ~40% on simple queries via early stopping
+**Efficiency Gain:** ReAct saves ~40% time on simple queries via early stopping
+
+---
 
 ## 📚 Documentation
 
-- **[UI_GUIDE.md](UI_GUIDE.md)** - Streamlit interface guide
-- **[REACT_FRAMEWORK.md](REACT_FRAMEWORK.md)** - Complete ReAct guide
-- **[SPECIALIST_AGENTS.md](SPECIALIST_AGENTS.md)** - Agent specs
-- **[ORCHESTRATOR_README.md](ORCHESTRATOR_README.md)** - Legacy docs
+| Document | Description |
+|----------|-------------|
+| [docs/REACT_FRAMEWORK.md](docs/REACT_FRAMEWORK.md) | Complete ReAct architecture guide |
+| [docs/SPECIALIST_AGENTS.md](docs/SPECIALIST_AGENTS.md) | Detailed agent specifications |
+| [docs/UI_GUIDE.md](docs/UI_GUIDE.md) | Streamlit interface guide |
+| [docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md) | Orchestration system docs |
+| [skills/business_analyst/SKILL.md](skills/business_analyst/SKILL.md) | Business Analyst implementation |
 
-## 🔧 Commands
-
-### Streamlit UI
-- Click buttons and type queries
-- Toggle settings in sidebar
-- Download reports via button
-
-### CLI (`main_orchestrated.py`)
-- Normal query - Ask research questions
-- `trace` - Show ReAct reasoning from last query
-- `ingest` - Process documents in `/data`
-- `quit` - Exit
+---
 
 ## 🗺️ Roadmap
 
-- [x] Business Analyst (RAG + Reranking)
-- [x] Multi-agent orchestration
-- [x] **ReAct framework** 🎉
-- [x] **Streamlit UI** 🎉
-- [ ] Quantitative Analyst
-- [ ] Market Analyst (real-time)
+### Completed ✅
+- [x] Business Analyst with RAG + BERT reranking
+- [x] Multi-agent orchestration framework
+- [x] **ReAct framework for iterative reasoning**
+- [x] **Streamlit web UI**
+- [x] ReAct trace visualization
+- [x] Session history & download
+
+### In Progress 🚧
+- [ ] Quantitative Analyst implementation
+- [ ] Market Analyst (real-time data)
 - [ ] Industry Analyst (web search)
+
+### Planned 📋
 - [ ] ESG Analyst
 - [ ] Macro Analyst
-- [ ] Parallel execution
-- [ ] Multi-turn memory
-- [ ] Cost tracking
+- [ ] Parallel agent execution
+- [ ] Multi-turn memory system
+- [ ] Cost tracking per iteration
 - [ ] Chart visualization in UI
+- [ ] Agent performance analytics
 
-## 💡 Why ReAct?
+---
 
-### Traditional
-```python
-plan = planner.plan(query)  # Fixed
-results = execute_all(plan)  # Cannot adapt
+## 🎓 Learning Resources
+
+This project demonstrates:
+
+1. **ReAct Framework** - Iterative reasoning + acting pattern
+2. **Multi-Agent Systems** - Coordinating specialist agents
+3. **Agentic RAG** - Beyond simple retrieval
+4. **LangGraph** - Stateful agent workflows
+5. **Hybrid LLMs** - Local (Ollama) + Cloud (Perplexity)
+6. **Streamlit** - Interactive data applications
+
+**Academic Reference:**
+- [ReAct Paper (Yao et al. 2023)](https://arxiv.org/abs/2210.03629) - *ReAct: Synergizing Reasoning and Acting in Language Models*
+
+---
+
+## 🔧 Development
+
+### Setup Development Environment
+
+```bash
+# Clone
+git clone https://github.com/hck717/Agent-skills-POC.git
+cd Agent-skills-POC
+
+# Create virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
+
+# Install
+pip install -r requirements.txt
+
+# Set environment variables
+export PERPLEXITY_API_KEY="your-key"
+export EODHD_API_KEY="your-key"
+
+# Start Ollama
+ollama serve
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 ```
 
-### ReAct
-```python
-while not done:
-    thought = reason(query, history)
-    action = decide(thought)
-    result = execute(action)
-    
-    if sufficient(history):
-        done = True  # Early stop
+### Adding New Specialist Agents
+
+1. Create agent in `skills/<agent_name>/`
+2. Implement `analyze(query)` method
+3. Register in `orchestrator_react.py`:
+   ```python
+   SPECIALIST_AGENTS = {
+       "your_agent": {
+           "description": "...",
+           "capabilities": [...],
+           "keywords": [...]
+       }
+   }
+   ```
+4. Update `docs/SPECIALIST_AGENTS.md`
+
+### Running Tests
+
+```bash
+# Test single agent
+python main.py
+
+# Test ReAct orchestration
+python main_orchestrated.py
+
+# Test UI
+streamlit run app.py
 ```
 
-**Benefits:** Adapts, self-corrects, efficient
+---
 
-## 🎓 Learning Path
+## ❓ FAQ
 
-1. **ReAct Framework** - Iterative reasoning
-2. **Multi-Agent Systems** - Orchestration
-3. **Agentic RAG** - Advanced retrieval
-4. **LangGraph** - Stateful workflows
-5. **Hybrid LLMs** - Local + Cloud
-6. **Streamlit** - Interactive UI
+**Q: Why ReAct instead of traditional planning?**  
+A: ReAct adapts based on intermediate results, self-corrects, and stops early when sufficient info is gathered. Traditional planning commits upfront and cannot adjust.
 
-## 📝 Design Philosophy
+**Q: Which interface should I use?**  
+A: Streamlit UI for demos and exploration. CLI for development and debugging. Python API for integration.
 
-從單一 Agent 嘅「直線流程」升級到 **ReAct Loop** 真正識思考，再加 Multi-Agent Orchestration 模擬完整 Research Team：ReAct Orchestrator 做 Project Manager，各 Specialist 做專家，Synthesizer 寫 Final Report。而家仲有 Streamlit UI 畀人方便用！
+**Q: Can I add my own specialist agents?**  
+A: Yes! Follow the development guide above. Agents just need an `analyze(query)` method.
 
-## 📄 License
+**Q: Do I need all 6 agents implemented?**  
+A: No. The system works with any subset. Currently only Business Analyst is implemented.
 
-MIT
+**Q: Is this production-ready?**  
+A: The framework is solid. Business Analyst is production-ready. Other agents are planned.
+
+---
+
+## 💡 Design Philosophy
+
+> 從單一 Agent 嘅「直線流程」升級到 **ReAct Loop** 真正識思考，再加 Multi-Agent Orchestration 模擬完整 Research Team：ReAct Orchestrator 做 Project Manager，各 Specialist 做專家，Synthesizer 寫 Final Report。而家仲有 Streamlit UI 畀人方便用！
+
+Translation: *"Upgraded from single agent 'linear flow' to ReAct Loop with real reasoning, plus Multi-Agent Orchestration simulating a complete Research Team: ReAct Orchestrator as Project Manager, specialists as experts, Synthesizer writing the final report. Now with Streamlit UI for easy use!"*
+
+---
+
+## 📝 License
+
+MIT License - see LICENSE file for details.
+
+---
+
+## 👥 Contributing
+
+Contributions welcome! Please:
+1. Fork the repo
+2. Create a feature branch
+3. Add tests if applicable
+4. Submit a pull request
+
+---
+
+## 📧 Contact
+
+Built by [@hck717](https://github.com/hck717)
+
+For questions or suggestions, open an issue on GitHub.
+
+---
+
+**🔬 Built for Transaction Banking & Equity Research**  
+**🤖 Powered by ReAct + Multi-Agent Orchestration**  
+**🌐 Streamlit UI + Python CLI**
