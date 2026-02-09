@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from orchestrator_react import ReActOrchestrator
 from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
+from skills.web_search_agent.agent import WebSearchAgent
 
 
 # Page config
@@ -69,12 +70,16 @@ if 'orchestrator' not in st.session_state:
     st.session_state.orchestrator = None
 if 'business_analyst' not in st.session_state:
     st.session_state.business_analyst = None
+if 'web_search_agent' not in st.session_state:
+    st.session_state.web_search_agent = None
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
 if 'show_trace_default' not in st.session_state:
     st.session_state.show_trace_default = True
+if 'tavily_api_key' not in st.session_state:
+    st.session_state.tavily_api_key = os.getenv("TAVILY_API_KEY", "")
 
 
 def format_citations(text: str) -> str:
@@ -92,7 +97,7 @@ def format_citations(text: str) -> str:
     return formatted_text
 
 
-def initialize_orchestrator(max_iterations: int = 2, ollama_url: str = "http://localhost:11434"):
+def initialize_orchestrator(max_iterations: int = 3, ollama_url: str = "http://localhost:11434", tavily_key: str = None):
     """Initialize the ReAct orchestrator and register agents"""
     try:
         # Create orchestrator (using local Ollama, no API key needed)
@@ -117,6 +122,21 @@ def initialize_orchestrator(max_iterations: int = 2, ollama_url: str = "http://l
         except Exception as e:
             st.session_state.business_analyst_status = f"⚠️ Error: {str(e)[:50]}"
         
+        # Try to register Web Search Agent (if Tavily key provided)
+        if tavily_key and tavily_key.strip():
+            try:
+                web_search_agent = WebSearchAgent(
+                    tavily_api_key=tavily_key,
+                    ollama_model="qwen2.5:7b"
+                )
+                orchestrator.register_specialist("web_search_agent", web_search_agent)
+                st.session_state.web_search_agent = web_search_agent
+                st.session_state.web_search_status = "✅ Active"
+            except Exception as e:
+                st.session_state.web_search_status = f"⚠️ Error: {str(e)[:50]}"
+        else:
+            st.session_state.web_search_status = "⏳ No Tavily API key"
+        
         st.session_state.orchestrator = orchestrator
         st.session_state.initialized = True
         return True, "System initialized successfully!"
@@ -130,15 +150,30 @@ with st.sidebar:
     st.markdown("### 🔬 ReAct Research System")
     st.markdown("---")
     
-    # Ollama Configuration
+    # Configuration
     st.markdown("### ⚙️ Configuration")
     
-    with st.expander("🔧 Ollama Settings", expanded=not st.session_state.initialized):
+    with st.expander("🔧 System Settings", expanded=not st.session_state.initialized):
         ollama_url = st.text_input(
             "Ollama URL",
             value="http://localhost:11434",
             help="URL of your Ollama instance"
         )
+        
+        st.markdown("---")
+        
+        # Tavily API Key (for Web Search Agent)
+        st.markdown("**🌐 Web Search (Optional)**")
+        tavily_key = st.text_input(
+            "Tavily API Key",
+            value=st.session_state.tavily_api_key,
+            type="password",
+            help="Get free API key at https://tavily.com\nLeave empty to use only document analysis"
+        )
+        st.session_state.tavily_api_key = tavily_key
+        
+        if not tavily_key:
+            st.info("💡 Without Tavily key, system will only use document analysis (Business Analyst)")
         
         st.markdown("---")
         st.markdown("""
@@ -162,7 +197,10 @@ with st.sidebar:
     if not st.session_state.initialized:
         if st.button("🚀 Initialize System", use_container_width=True):
             with st.spinner("Connecting to Ollama and initializing orchestrator..."):
-                success, message = initialize_orchestrator(ollama_url=ollama_url)
+                success, message = initialize_orchestrator(
+                    ollama_url=ollama_url,
+                    tavily_key=st.session_state.tavily_api_key
+                )
                 if success:
                     st.success(message)
                     st.rerun()
@@ -179,9 +217,18 @@ with st.sidebar:
         
         for agent_name, info in RO.SPECIALIST_AGENTS.items():
             if agent_name in st.session_state.orchestrator.specialist_agents:
-                st.success(f"✅ {agent_name}")
+                priority = info.get('priority', 99)
+                st.success(f"✅ {agent_name} (P{priority})")
             else:
                 st.info(f"⏳ {agent_name}")
+        
+        # Show agent execution order
+        st.caption("""
+        **Execution Order:**
+        1. Business Analyst (documents)
+        2. Web Search Agent (supplements)
+        3. Synthesis (combines all)
+        """)
         
         # Business Analyst Data Management
         if st.session_state.business_analyst:
@@ -261,8 +308,8 @@ with st.sidebar:
             "Max Iterations",
             min_value=1,
             max_value=5,
-            value=2,
-            help="Maximum number of ReAct loop iterations"
+            value=3,
+            help="Maximum number of ReAct loop iterations (3 = Business + Web + Synthesis)"
         )
         st.session_state.orchestrator.max_iterations = max_iterations
         
@@ -277,6 +324,7 @@ with st.sidebar:
         if st.button("🔄 Reset System", use_container_width=True):
             st.session_state.orchestrator = None
             st.session_state.business_analyst = None
+            st.session_state.web_search_agent = None
             st.session_state.history = []
             st.session_state.initialized = False
             st.rerun()
@@ -291,7 +339,10 @@ with st.sidebar:
     - 👁️ Observe
     - 🔁 Repeat
     
-    Uses **local Ollama** for synthesis (no API costs!)
+    **Data Sources:**
+    - 📄 Local Documents (10-K, PDFs)
+    - 🌐 Web Search (Tavily + local LLM)
+    - 🔒 All synthesis done locally
     """)
 
 
@@ -327,24 +378,32 @@ ollama pull nomic-embed-text
 ollama serve
         """, language="bash")
         
-        st.markdown("**Step 4: Initialize System**")
+        st.markdown("**Step 4: (Optional) Get Tavily Key**")
+        st.markdown("""
+        For web search: [tavily.com](https://tavily.com)
+        """)
+        
+        st.markdown("**Step 5: Initialize System**")
         st.markdown("""
         Click **"🚀 Initialize System"** in the sidebar
         """)
     
     st.markdown("---")
-    st.markdown("### ✅ Benefits of Local LLM")
+    st.markdown("### ✅ Benefits")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.success("💰 **Zero API Costs**")
-        st.caption("No per-request fees")
+        st.caption("Local LLM synthesis")
     with col2:
         st.success("🔒 **Full Privacy**")
-        st.caption("Data never leaves your machine")
+        st.caption("Data stays local")
     with col3:
         st.success("📚 **Document Citations**")
-        st.caption("Preserves local file references")
+        st.caption("Local file references")
+    with col4:
+        st.success("🌐 **Web Supplement**")
+        st.caption("Current market data")
 
 else:
     # Query interface
@@ -352,17 +411,29 @@ else:
     
     # Example queries
     with st.expander("📌 Example Queries"):
-        st.markdown("""
-        - What are Apple's key competitive risks?
-        - Analyze Tesla's market position
-        - Compare Microsoft and Google's business models
-        - Evaluate Apple's supply chain vulnerabilities from their 10-K
-        """)
+        if st.session_state.web_search_agent:
+            st.markdown("""
+            **With Web Search:**
+            - What are Apple's latest competitive developments? (documents + web)
+            - Analyze Tesla's recent news and 10-K risk factors (hybrid)
+            - Compare Microsoft's strategy in documents vs analyst opinions (multi-source)
+            
+            **Document-Only:**
+            - Evaluate Apple's supply chain vulnerabilities from their 10-K
+            - What risks does Apple face according to their SEC filings?
+            """)
+        else:
+            st.markdown("""
+            - What are Apple's key competitive risks?
+            - Analyze Tesla's market position
+            - Evaluate Apple's supply chain vulnerabilities from their 10-K
+            - What risks does Apple face according to their SEC filings?
+            """)
     
     # Query input
     query = st.text_area(
         "Your Question:",
-        placeholder="e.g., Analyze Apple's competitive positioning and risk factors from their latest 10-K filing.",
+        placeholder="e.g., Analyze Apple's competitive positioning from their 10-K and supplement with recent market developments.",
         height=100,
         key="query_input"
     )
@@ -463,10 +534,12 @@ else:
 
 # Footer
 st.markdown("---")
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown("🔬 **ReAct Framework**")
 with col2:
     st.markdown("🤖 **Local Ollama LLM**")
 with col3:
     st.markdown("📊 **Document Citations**")
+with col4:
+    st.markdown("🌐 **Web Supplement**")
