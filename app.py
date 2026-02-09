@@ -59,6 +59,7 @@ st.markdown("""
         padding: 1rem;
         font-family: monospace;
         font-size: 0.9rem;
+        white-space: pre-wrap;
     }
     .metric-card {
         background-color: #ffffff;
@@ -78,26 +79,24 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
+if 'perplexity_api_key' not in st.session_state:
+    st.session_state.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
+if 'eodhd_api_key' not in st.session_state:
+    st.session_state.eodhd_api_key = os.getenv("EODHD_API_KEY", "")
 
 
-def check_environment():
-    """Check if all required environment variables are set"""
-    issues = []
-    
-    if not os.getenv("PERPLEXITY_API_KEY"):
-        issues.append("❌ PERPLEXITY_API_KEY not set")
-    
-    if not os.getenv("EODHD_API_KEY"):
-        issues.append("⚠️ EODHD_API_KEY not set (optional)")
-    
-    return issues
-
-
-def initialize_orchestrator():
+def initialize_orchestrator(perplexity_api_key: str, max_iterations: int = 5):
     """Initialize the ReAct orchestrator and register agents"""
     try:
-        # Create orchestrator
-        orchestrator = ReActOrchestrator(max_iterations=5)
+        # Validate API key
+        if not perplexity_api_key or len(perplexity_api_key) < 10:
+            return False, "Invalid Perplexity API key. Please enter a valid key."
+        
+        # Create orchestrator with API key
+        orchestrator = ReActOrchestrator(
+            perplexity_api_key=perplexity_api_key,
+            max_iterations=max_iterations
+        )
         
         # Try to register Business Analyst
         try:
@@ -112,15 +111,11 @@ def initialize_orchestrator():
         
         st.session_state.orchestrator = orchestrator
         st.session_state.initialized = True
+        st.session_state.perplexity_api_key = perplexity_api_key
         return True, "System initialized successfully!"
         
     except Exception as e:
         return False, f"Failed to initialize: {str(e)}"
-
-
-def format_trace(trace_summary):
-    """Format ReAct trace for display"""
-    return f"```\n{trace_summary}\n```"
 
 
 # Sidebar
@@ -128,24 +123,50 @@ with st.sidebar:
     st.markdown("### 🔬 ReAct Research System")
     st.markdown("---")
     
+    # API Key Configuration
+    st.markdown("### 🔑 API Configuration")
+    
+    with st.expander("⚙️ Configure API Keys", expanded=not st.session_state.initialized):
+        perplexity_key = st.text_input(
+            "Perplexity API Key *",
+            value=st.session_state.perplexity_api_key,
+            type="password",
+            help="Required for ReAct orchestration and synthesis"
+        )
+        
+        eodhd_key = st.text_input(
+            "EODHD API Key (Optional)",
+            value=st.session_state.eodhd_api_key,
+            type="password",
+            help="Optional - for market data access"
+        )
+        
+        st.markdown("---")
+        st.markdown("""
+        **Get API Keys:**
+        - [Perplexity AI](https://www.perplexity.ai/settings/api) (Required)
+        - [EODHD](https://eodhd.com/register) (Optional)
+        """)
+    
     # System Status
+    st.markdown("---")
     st.markdown("### System Status")
     
-    env_issues = check_environment()
-    if not env_issues:
-        st.success("✅ Environment OK")
+    if perplexity_key:
+        st.success("✅ Perplexity API Key Set")
     else:
-        for issue in env_issues:
-            if "❌" in issue:
-                st.error(issue)
-            else:
-                st.warning(issue)
+        st.error("❌ Perplexity API Key Required")
+    
+    if eodhd_key:
+        st.success("✅ EODHD API Key Set")
+    else:
+        st.info("ℹ️ EODHD API Key Optional")
     
     # Initialize button
     if not st.session_state.initialized:
-        if st.button("🚀 Initialize System", use_container_width=True):
+        if st.button("🚀 Initialize System", use_container_width=True, disabled=not perplexity_key):
             with st.spinner("Initializing ReAct orchestrator..."):
-                success, message = initialize_orchestrator()
+                success, message = initialize_orchestrator(perplexity_key)
                 if success:
                     st.success(message)
                     st.rerun()
@@ -211,44 +232,51 @@ with st.sidebar:
 st.markdown('<div class="main-header">🔬 ReAct Equity Research System</div>', unsafe_allow_html=True)
 
 if not st.session_state.initialized:
-    st.info("👈 Please initialize the system using the sidebar.")
+    st.info("👈 Please configure API keys and initialize the system using the sidebar.")
     
     # Setup instructions
-    st.markdown("### 🛠️ Setup Instructions")
+    st.markdown("### 🚀 Quick Start Guide")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("**1. Set Environment Variables**")
+        st.markdown("**Option 1: Using UI (Recommended)**")
+        st.markdown("""
+        1. Click **"⚙️ Configure API Keys"** in sidebar
+        2. Enter your Perplexity API key
+        3. Click **"🚀 Initialize System"**
+        4. Start asking questions!
+        """)
+        
+        st.markdown("**Option 2: Using Environment Variables**")
         st.code("""
 export PERPLEXITY_API_KEY="your-key"
-export EODHD_API_KEY="your-key"
-        """, language="bash")
-        
-        st.markdown("**2. Start Ollama**")
-        st.code("""
-ollama serve
-ollama pull qwen2.5:7b
-ollama pull nomic-embed-text
+streamlit run app.py
         """, language="bash")
     
     with col2:
-        st.markdown("**3. Install Dependencies**")
+        st.markdown("**Setup Ollama (for Business Analyst)**")
         st.code("""
-pip install streamlit
-pip install -r requirements.txt
+# Terminal 1: Start Ollama
+ollama serve
+
+# Terminal 2: Pull models
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
         """, language="bash")
         
-        st.markdown("**4. Run Streamlit**")
-        st.code("""
-streamlit run app.py
-        """, language="bash")
+        st.markdown("**Get Your API Keys**")
+        st.markdown("""
+        - [Perplexity API](https://www.perplexity.ai/settings/api) - Required
+        - [EODHD](https://eodhd.com/register) - Optional
+        """)
     
     st.markdown("---")
     st.markdown("### 📚 Documentation")
     st.markdown("""
     - [docs/REACT_FRAMEWORK.md](docs/REACT_FRAMEWORK.md) - Complete ReAct guide
     - [docs/SPECIALIST_AGENTS.md](docs/SPECIALIST_AGENTS.md) - Agent specifications
+    - [docs/UI_GUIDE.md](docs/UI_GUIDE.md) - UI usage guide
     - [README.md](README.md) - Project overview
     """)
 
@@ -308,9 +336,6 @@ else:
     if submit_button and query.strip():
         with st.spinner("🧠 ReAct loop running..."):
             try:
-                # Progress tracking
-                progress_placeholder = st.empty()
-                
                 # Execute research
                 start_time = datetime.now()
                 report = st.session_state.orchestrator.research(query)
@@ -333,8 +358,19 @@ else:
                 
             except Exception as e:
                 st.error(f"❌ Error during analysis: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc(), language="python")
+                
+                # Show helpful error messages
+                error_str = str(e).lower()
+                if "401" in error_str or "unauthorized" in error_str:
+                    st.warning("⚠️ **API Key Issue**: Your Perplexity API key may be invalid. Please check and update it in the sidebar.")
+                elif "400" in error_str or "bad request" in error_str:
+                    st.warning("⚠️ **API Request Issue**: The request format may be incorrect. This could be due to an invalid model name or API key.")
+                elif "429" in error_str or "rate limit" in error_str:
+                    st.warning("⚠️ **Rate Limit**: You've exceeded the API rate limit. Please wait a moment and try again.")
+                
+                with st.expander("🐛 Debug Information"):
+                    import traceback
+                    st.code(traceback.format_exc(), language="python")
     
     # Display results
     if st.session_state.history:
