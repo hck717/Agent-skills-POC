@@ -32,7 +32,11 @@ class BusinessAnalystGraphAgent:
         self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         
         # 🔥 CRITICAL FIX: Temperature 0.0 for strict citation adherence
-        self.llm = ChatOllama(model=self.chat_model_name, temperature=0.0)
+        self.llm = ChatOllama(
+            model=self.chat_model_name, 
+            temperature=0.0,
+            num_predict=2000  # 🔥 FIX 1: Limit output tokens (was unlimited)
+        )
         self.embeddings = OllamaEmbeddings(model=self.embed_model_name)
         self.reranker = CrossEncoder(self.rerank_model_name)
         self.vectorstores = {}
@@ -241,11 +245,13 @@ class BusinessAnalystGraphAgent:
         USER QUESTION: {query}
         
         Now provide your analysis following the EXACT citation format shown above.
+        Keep your response focused and concise (target ~2000 tokens).
         """
 
         new_messages = [SystemMessage(content=full_prompt)] + messages
         
         print("   🤖 Generating analysis with strict citation enforcement (DeepSeek-R1)...")
+        print("   ⚡ Token limit: 2000 (optimized for synthesis)")
         response = self.llm.invoke(new_messages)
         analysis = response.content
         

@@ -177,6 +177,7 @@ RULES:
 5. Distinguish from historical 10-K data: "While 10-K shows... recent developments indicate..."
 6. Be SPECIFIC with dates and timeframes
 7. Focus on NEW information not in SEC filings
+8. Keep response concise (~1200 tokens max)
 
 Professional Tone:
 - Concise, factual, data-driven
@@ -209,10 +210,12 @@ Highlight what's NEW vs what's in the 10-K.
 Provide analysis following the EXACT citation format shown above.
 Emphasize temporal context and recent developments.
 PRESERVE all SOURCE markers in your response.
+Keep response focused and concise (target ~1200 tokens).
         """
         
         try:
             print(f"   🤖 Synthesizing with {self.ollama_model}...")
+            print(f"   ⚡ Token limit: 1200 (optimized for synthesis)")
             
             response = ollama.chat(
                 model=self.ollama_model,
@@ -222,7 +225,7 @@ PRESERVE all SOURCE markers in your response.
                 ],
                 options={
                     'temperature': 0.0,  # 🔥 CRITICAL: Deterministic for citation preservation
-                    'num_predict': 2500
+                    'num_predict': 1200  # 🔥 FIX 2: Reduced from 2500 (52% reduction)
                 }
             )
             

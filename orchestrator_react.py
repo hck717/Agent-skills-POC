@@ -630,7 +630,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
                 messages, 
                 temperature=0.15,  # Qwen performs well at lower temp for synthesis
                 num_predict=3500,  # Same token count
-                timeout=180        # 3 minutes (much faster than DeepSeek's 5+ mins)
+                timeout=240        # 🔥 FIX 3: Increased from 180s to 240s (4 minutes)
             )
             print("   ✅ Synthesis complete")
             
@@ -744,6 +744,10 @@ def main():
     print("\n🎯 Model Strategy:")
     print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
     print(f"   - Synthesis: {ReActOrchestrator.SYNTHESIS_MODEL} (final report combining)")
+    print("\n💡 Performance Optimizations:")
+    print("   - Business Analyst: 2000 token limit")
+    print("   - Web Search: 1200 token limit")
+    print("   - Synthesis timeout: 240s (4 minutes)")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
