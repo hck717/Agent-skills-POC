@@ -299,8 +299,8 @@ Return ONLY this JSON (no other text):
         
         # Strategy 4: Build JSON from common patterns
         # Look for action and agent_name in text
-        action_match = re.search(r'["\']action["\']\s*:\s*["\']([^"\']*)["\'']', response)
-        agent_match = re.search(r'["\']agent_name["\']\s*:\s*["\']([^"\']*)["\'']', response)
+        action_match = re.search(r'"action"\s*:\s*"([^"]+)"', response)
+        agent_match = re.search(r'"agent_name"\s*:\s*"([^"]+)"', response)
         
         if action_match:
             return {
