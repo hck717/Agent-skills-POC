@@ -26,7 +26,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS with dark trace background and visible citations
 st.markdown("""
 <style>
     .main-header {
@@ -53,17 +53,23 @@ st.markdown("""
         background-color: #f8d7da;
         border-left: 4px solid #dc3545;
     }
+    /* DARK TRACE BOX with light text */
     .trace-box {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+        border: 2px solid #444;
         border-radius: 0.5rem;
         padding: 1.5rem;
         font-family: 'Courier New', monospace;
-        font-size: 0.85rem;
+        font-size: 0.9rem;
         white-space: pre-wrap;
         max-height: 600px;
         overflow-y: auto;
-        line-height: 1.6;
+        line-height: 1.8;
+    }
+    /* Make emojis and special chars more visible in trace */
+    .trace-box strong {
+        color: #ffd700;
     }
     .metric-card {
         background-color: #ffffff;
@@ -72,20 +78,23 @@ st.markdown("""
         padding: 1rem;
         text-align: center;
     }
+    /* CITATION STYLING - Blue badges */
     .citation {
         display: inline-block;
-        background-color: #e3f2fd;
-        color: #1976d2;
-        padding: 2px 6px;
-        margin: 0 2px;
-        border-radius: 3px;
+        background-color: #1976d2;
+        color: #ffffff;
+        padding: 3px 8px;
+        margin: 0 3px;
+        border-radius: 4px;
         font-size: 0.85em;
         font-weight: bold;
-        border: 1px solid #90caf9;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
+    /* Report section with better readability */
     .report-section {
-        line-height: 1.8;
+        line-height: 1.9;
         font-size: 1.05rem;
+        color: #333;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,20 +112,26 @@ if 'perplexity_api_key' not in st.session_state:
 if 'eodhd_api_key' not in st.session_state:
     st.session_state.eodhd_api_key = os.getenv("EODHD_API_KEY", "")
 if 'show_trace_default' not in st.session_state:
-    st.session_state.show_trace_default = True  # Changed to True by default
+    st.session_state.show_trace_default = True
 
 
 def format_citations(text: str) -> str:
     """
-    Format citations in the report to be visible and styled
-    Converts [1], [2][3], etc. to styled citation badges
+    Format citations in the report to be highly visible styled badges
+    Converts [1], [2], [web:3], [cite:4], etc. to styled HTML
     """
-    # Pattern to match citations like [1], [2], [web:3], [cite:4], etc.
-    citation_pattern = r'\[(\w+:?\d+)\]'
+    # Pattern to match citations like [1], [2], [web:3], [cite:4]
+    # More aggressive pattern to catch all bracket notations
+    citation_pattern = r'\[([^\]]+?)\]'
     
     def replace_citation(match):
-        citation = match.group(1)
-        return f'<span class="citation">[{citation}]</span>'
+        citation_text = match.group(1)
+        # Only format if it looks like a citation (number or source:number)
+        if citation_text.isdigit() or ':' in citation_text:
+            return f'<span class="citation">[{citation_text}]</span>'
+        else:
+            # Return unchanged if it's not a citation
+            return match.group(0)
     
     formatted_text = re.sub(citation_pattern, replace_citation, text)
     return formatted_text
@@ -452,12 +467,12 @@ else:
                 st.markdown("**🔍 Query:**")
                 st.info(latest['query'])
                 
-                # Report with formatted citations
+                # Report with formatted citations - MUST use unsafe_allow_html=True
                 st.markdown("**📄 Research Report:**")
                 formatted_report = format_citations(latest['report'])
-                st.markdown(f'<div class="report-section">{formatted_report}</div>', unsafe_allow_html=True)
+                st.markdown(formatted_report, unsafe_allow_html=True)
                 
-                # ReAct Trace - NOW ALWAYS VISIBLE BY DEFAULT
+                # ReAct Trace - DARK BACKGROUND FOR VISIBILITY
                 st.markdown("---")
                 st.markdown("### 🧠 ReAct Reasoning Trace")
                 st.markdown("*Step-by-step reasoning and actions taken during the analysis*")
@@ -499,10 +514,10 @@ else:
                         
                         st.markdown("---")
                         
-                        # Report with citations
+                        # Report with citations - MUST use unsafe_allow_html=True
                         st.markdown("**📄 Report:**")
                         formatted_hist_report = format_citations(item['report'])
-                        st.markdown(f'<div class="report-section">{formatted_hist_report}</div>', unsafe_allow_html=True)
+                        st.markdown(formatted_hist_report, unsafe_allow_html=True)
                         
                         # Trace
                         if st.checkbox(f"🧠 Show ReAct Trace", key=f"trace_{idx}"):
