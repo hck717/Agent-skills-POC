@@ -24,10 +24,10 @@ class BusinessAnalystGraphAgent:
         self.data_path = data_path
         self.db_path = db_path
         
-        print(f"🚀 Initializing STRATEGIC Analyst Agent v23.0 (Citation Fix)...")
+        print(f"🚀 Initializing STRATEGIC Analyst Agent v23.0 (DeepSeek-R1 8B)...")
         
         # Models
-        self.chat_model_name = "qwen2.5:7b"
+        self.chat_model_name = "deepseek-r1:8b"
         self.embed_model_name = "nomic-embed-text"
         self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         
@@ -245,7 +245,7 @@ class BusinessAnalystGraphAgent:
 
         new_messages = [SystemMessage(content=full_prompt)] + messages
         
-        print("   🤖 Generating analysis with strict citation enforcement...")
+        print("   🤖 Generating analysis with strict citation enforcement (DeepSeek-R1)...")
         response = self.llm.invoke(new_messages)
         analysis = response.content
         

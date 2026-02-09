@@ -25,7 +25,7 @@ class WebSearchAgent:
     Always runs AFTER Business Analyst to identify what's missing.
     """
     
-    def __init__(self, tavily_api_key: str = None, ollama_model: str = "qwen2.5:7b"):
+    def __init__(self, tavily_api_key: str = None, ollama_model: str = "deepseek-r1:8b"):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         if not self.tavily_api_key:
             raise ValueError("TAVILY_API_KEY not found. Set via environment variable or pass to constructor.")

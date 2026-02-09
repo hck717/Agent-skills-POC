@@ -3,7 +3,7 @@
 ReAct-based Multi-Agent Orchestrator
 
 Rule-based orchestration with LOCAL LLM synthesis for professional equity research.
-Version: 2.1 - 10/10 Quality Standard (Timeout Optimized)
+Version: 2.1 - 10/10 Quality Standard (DeepSeek-R1 8B)
 """
 
 import os
@@ -86,11 +86,11 @@ class ReActTrace:
 class OllamaClient:
     """Client for local Ollama LLM (no web search)"""
     
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen2.5:7b"):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "deepseek-r1:8b"):
         self.base_url = base_url
         self.model = model
     
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.3, num_predict: int = 3500, timeout: int = 300) -> str:
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.2, num_predict: int = 3500, timeout: int = 300) -> str:
         """Send chat request to Ollama API"""
         url = f"{self.base_url}/api/chat"
         
@@ -396,11 +396,12 @@ class ReActOrchestrator:
     def _synthesize(self, user_query: str) -> str:
         """
         Synthesize with LOCAL LLM - Professional Equity Research Report (10/10 Quality)
+        Using DeepSeek-R1 8B for superior financial reasoning
         """
         specialist_calls = self.trace.get_specialist_calls()
         current_date = datetime.now().strftime("%B %d, %Y")
         
-        print(f"\n📊 [SYNTHESIS] Combining insights...")
+        print(f"\n📊 [SYNTHESIS] Combining insights with DeepSeek-R1 8B...")
         print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
         
         specialist_outputs = []
@@ -608,10 +609,10 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         try:
             messages = [{"role": "user", "content": prompt}]
             print("   🔄 Generating 10/10 professional equity research synthesis...")
-            # 🔥 Optimized parameters: balanced quality vs speed
+            # 🔥 DeepSeek-R1 8B optimized parameters
             final_report = self.client.chat(
                 messages, 
-                temperature=0.25,  # Slightly higher for faster generation
+                temperature=0.20,  # DeepSeek-R1 performs well at this temp
                 num_predict=3500,  # Optimized token count
                 timeout=300        # 5 minute timeout
             )
@@ -662,7 +663,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
         print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.1")
-        print("   10/10 Professional Quality Standard (Timeout Optimized)")
+        print("   10/10 Professional Quality Standard (DeepSeek-R1 8B)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -714,13 +715,14 @@ def main():
         if not orchestrator.test_connection():
             print("\n❌ Failed to connect to Ollama")
             print("\n💡 Make sure Ollama is running: ollama serve")
+            print("💡 Make sure DeepSeek-R1 8B is installed: ollama pull deepseek-r1:8b")
             return
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
     
     print("\n🚀 Professional Equity Research Orchestrator v2.1 Ready")
-    print("   10/10 Quality Standard - Institutional Grade (Timeout Optimized)")
+    print("   10/10 Quality Standard - Institutional Grade (DeepSeek-R1 8B)")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
