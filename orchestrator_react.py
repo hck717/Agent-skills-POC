@@ -2,14 +2,8 @@
 """
 ReAct-based Multi-Agent Orchestrator
 
-Implements the ReAct (Reasoning + Acting) framework for iterative agent orchestration.
-The orchestrator can reason about results, decide next actions, and refine its approach.
-
-ReAct Loop:
-1. Thought: Reason about current state and what to do next
-2. Action: Execute specialist agent or synthesis
-3. Observation: Receive and analyze results
-4. Repeat until task is complete or max iterations reached
+Simplified version using rule-based orchestration instead of Perplexity JSON responses.
+This avoids Perplexity refusing to act as an orchestrator.
 """
 
 import os
@@ -89,9 +83,8 @@ class ReActTrace:
 
 
 class PerplexityClient:
-    """Client for Perplexity API interactions"""
+    """Client for Perplexity API interactions (used only for synthesis)"""
     
-    # Valid Perplexity Sonar models (as of 2026)
     VALID_MODELS = {
         "sonar": "Fast, cost-efficient search and Q&A (128k context)",
         "sonar-pro": "Deep retrieval for complex queries (200k context)",
@@ -111,10 +104,8 @@ class PerplexityClient:
     
     def chat(self, messages: List[Dict[str, str]], model: str = "sonar", temperature: float = 0.2) -> str:
         """Send chat request to Perplexity API"""
-        # Validate model
         if model not in self.VALID_MODELS:
             print(f"⚠️ Warning: Model '{model}' not in known list. Using 'sonar' instead.")
-            print(f"Valid models: {', '.join(self.VALID_MODELS.keys())}")
             model = "sonar"
         
         payload = {
@@ -132,47 +123,29 @@ class PerplexityClient:
                 timeout=60
             )
             
-            # Better error handling
             if response.status_code == 400:
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', {}).get('message', 'Unknown error')
-                    raise Exception(f"Bad Request (400): {error_msg}")
-                except:
-                    raise Exception(f"Bad Request (400): Check API key and model name. Valid models: {', '.join(self.VALID_MODELS.keys())}")
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                raise Exception(f"Bad Request (400): {error_msg}")
             elif response.status_code == 401:
-                raise Exception("Unauthorized (401): Invalid API key. Get a valid key from https://www.perplexity.ai/settings/api")
+                raise Exception("Unauthorized (401): Invalid API key")
             elif response.status_code == 429:
-                raise Exception("Rate Limit (429): Too many requests. Please wait and try again.")
-            elif response.status_code == 403:
-                raise Exception("Forbidden (403): API access denied. Check your subscription plan.")
+                raise Exception("Rate Limit (429): Too many requests")
             
             response.raise_for_status()
-            
             result = response.json()
-            if 'choices' not in result or not result['choices']:
-                raise Exception(f"Unexpected API response format: {result}")
-            
             return result["choices"][0]["message"]["content"]
             
-        except requests.exceptions.Timeout:
-            raise Exception("Request timeout (60s). The query may be too complex.")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Network error: {str(e)}")
         except Exception as e:
-            if "Perplexity API error" in str(e):
-                raise
             raise Exception(f"Perplexity API error: {str(e)}")
     
     def test_connection(self) -> bool:
-        """Test if API connection works"""
         try:
             print("🔌 Testing Perplexity API connection...")
             messages = [{"role": "user", "content": "Say 'OK' if you can read this."}]
             response = self.chat(messages, model="sonar", temperature=0.0)
             if response:
                 print("✅ Connection successful!")
-                print(f"📝 Response: {response[:100]}")
                 return True
             return False
         except Exception as e:
@@ -181,43 +154,35 @@ class PerplexityClient:
 
 
 class ReActOrchestrator:
-    """ReAct-based orchestrator that iteratively reasons and acts"""
+    """Rule-based orchestrator with Perplexity for synthesis only"""
     
     SPECIALIST_AGENTS = {
         "business_analyst": {
-            "description": "Analyzes 10-K filings, financial statements, business models, competitive positioning, and strategic risks using RAG from local documents",
-            "capabilities": ["Financial statement analysis", "Competitive intelligence", "Risk assessment", "Business model evaluation", "Document retrieval"],
-            "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "business model", "MD&A", "financial statement"],
-            "priority": "HIGH - Has access to proprietary documents via ChromaDB"
+            "description": "Analyzes 10-K filings, financial statements, competitive positioning using RAG",
+            "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "financial"],
         },
         "quantitative_analyst": {
-            "description": "Performs quantitative analysis including financial ratios, valuation metrics, growth rates, and statistical modeling",
-            "capabilities": ["DCF valuation", "Ratio analysis", "Trend forecasting", "Comparative metrics"],
-            "keywords": ["calculate", "ratio", "P/E", "margin", "DCF", "valuation", "CAGR", "growth"],
-            "priority": "MEDIUM - Placeholder for now"
+            "description": "Performs quantitative analysis, ratios, valuation metrics",
+            "keywords": ["ratio", "P/E", "margin", "DCF", "valuation", "CAGR"],
         },
         "market_analyst": {
-            "description": "Tracks market sentiment, technical indicators, price movements, trading volumes, and market positioning",
-            "capabilities": ["Sentiment analysis", "Technical analysis", "Market trends", "Trading patterns"],
-            "keywords": ["sentiment", "price", "stock", "volume", "technical", "chart", "analyst rating"],
-            "priority": "MEDIUM - Placeholder for now"
+            "description": "Tracks market sentiment, technical indicators, price movements",
+            "keywords": ["sentiment", "price", "stock", "volume", "technical"],
         },
         "industry_analyst": {
-            "description": "Provides sector-specific insights, industry trends, regulatory landscape, and peer benchmarking",
-            "capabilities": ["Industry dynamics", "Regulatory analysis", "Peer comparison", "Sector trends"],
-            "keywords": ["industry", "sector", "peers", "competitors", "market share", "regulation"],
-            "priority": "MEDIUM - Placeholder for now"
+            "description": "Provides sector insights, trends, regulatory landscape",
+            "keywords": ["industry", "sector", "peers", "competitors", "market share"],
         },
     }
     
-    def __init__(self, perplexity_api_key: str = None, max_iterations: int = 5):
+    def __init__(self, perplexity_api_key: str = None, max_iterations: int = 3):
         try:
             self.client = PerplexityClient(perplexity_api_key)
         except ValueError as e:
             raise ValueError(f"Failed to initialize Perplexity client: {str(e)}")
         
         self.max_iterations = max_iterations
-        self.specialist_agents = {}  # Registry of implemented agents
+        self.specialist_agents = {}
         self.trace = ReActTrace()
         
     def register_specialist(self, agent_name: str, agent_instance):
@@ -226,165 +191,62 @@ class ReActOrchestrator:
         print(f"✅ Registered specialist: {agent_name}")
     
     def test_connection(self) -> bool:
-        """Test Perplexity API connection"""
         return self.client.test_connection()
     
-    def _create_reasoning_prompt(self, user_query: str, iteration: int, history: str) -> str:
-        """Create SIMPLIFIED prompt for reasoning step"""
+    def _reason_rule_based(self, user_query: str, iteration: int) -> Action:
+        """
+        RULE-BASED REASONING (no Perplexity JSON)
         
-        available_agents_status = "\n".join([
-            f"- {name}: {'AVAILABLE' if name in self.specialist_agents else 'NOT AVAILABLE'}"
-            for name in self.SPECIALIST_AGENTS.keys()
-        ])
+        Simple rules:
+        - Iteration 1-2: Call business_analyst if available
+        - Iteration 3: Finish and synthesize
+        """
+        print(f"\n🧠 [THOUGHT {iteration}] Rule-based reasoning...")
         
+        query_lower = user_query.lower()
         called_agents = self.trace.get_specialist_calls()
         
-        # SIMPLIFIED PROMPT - focuses on clear JSON output
-        prompt = f"""You are a research orchestrator. Decide the next action.
-
-QUERY: {user_query}
-
-ITERATION: {iteration}/{self.max_iterations}
-
-AVAILABLE AGENTS:
-{available_agents_status}
-
-ALREADY CALLED: {', '.join(called_agents) if called_agents else 'None'}
-
-RULES:
-- If iteration 1 and business_analyst is AVAILABLE: call it
-- If iteration 2-3: call other available agents
-- If iteration 4-5: finish and synthesize
-
-Return ONLY this JSON (no other text):
-{{
-  "thought": "brief reasoning",
-  "action": "call_specialist" or "finish",
-  "agent_name": "business_analyst",
-  "task_description": "the specific task"
-}}
-"""
-        return prompt
-    
-    def _extract_json_from_response(self, response: str) -> dict:
-        """Extract JSON from response with multiple fallback strategies"""
-        # Strategy 1: Direct parse
-        try:
-            return json.loads(response.strip())
-        except:
-            pass
-        
-        # Strategy 2: Extract from markdown code blocks
-        if "```json" in response:
-            json_str = response.split("```json")[1].split("```")[0].strip()
-            try:
-                return json.loads(json_str)
-            except:
-                pass
-        
-        if "```" in response:
-            json_str = response.split("```")[1].split("```")[0].strip()
-            try:
-                return json.loads(json_str)
-            except:
-                pass
-        
-        # Strategy 3: Find JSON object with regex
-        match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except:
-                pass
-        
-        # Strategy 4: Build JSON from common patterns
-        # Look for action and agent_name in text
-        action_match = re.search(r'"action"\s*:\s*"([^"]+)"', response)
-        agent_match = re.search(r'"agent_name"\s*:\s*"([^"]+)"', response)
-        
-        if action_match:
-            return {
-                "thought": "Extracted from response",
-                "action": action_match.group(1),
-                "agent_name": agent_match.group(1) if agent_match else "business_analyst",
-                "task_description": "Analyze the query"
-            }
-        
-        raise ValueError(f"Could not extract JSON from: {response[:300]}")
-    
-    def _reason(self, user_query: str, iteration: int) -> Action:
-        """Reasoning step: Decide what to do next"""
-        print(f"\n🧠 [THOUGHT {iteration}] Reasoning about next action...")
-        
-        history = self.trace.get_history_summary()
-        prompt = self._create_reasoning_prompt(user_query, iteration, history)
-        
-        messages = [{"role": "user", "content": prompt}]
-        
-        try:
-            # Use smaller, faster sonar model
-            response = self.client.chat(messages, model="sonar", temperature=0.1)
-            print(f"   📥 Response length: {len(response)} chars")
+        # Rule 1: Always call business_analyst first if available and not yet called
+        if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents:
+            thought = "Business Analyst has document access - calling first for foundational analysis"
+            self.trace.add_thought(thought, iteration)
+            print(f"   💭 {thought}")
             
-        except Exception as e:
-            print(f"   ⚠️ Error calling Perplexity API: {str(e)}")
-            # Fallback: call business_analyst if available
-            if iteration == 1 and "business_analyst" in self.specialist_agents:
-                print(f"   ⤵️ Fallback: Calling business_analyst")
-                return Action(
-                    action_type=ActionType.CALL_SPECIALIST,
-                    agent_name="business_analyst",
-                    task_description=user_query,
-                    reasoning="API error fallback"
-                )
-            return Action(action_type=ActionType.FINISH)
-        
-        try:
-            # Extract JSON
-            data = self._extract_json_from_response(response)
-            
-            # Validate
-            if "action" not in data:
-                raise ValueError("Missing 'action' field")
-            
-            thought_content = data.get("thought", "No thought provided")
-            self.trace.add_thought(thought_content, iteration)
-            print(f"   💭 {thought_content[:100]}")
-            
-            # Create action
-            action_type = ActionType(data["action"])
-            action = Action(
-                action_type=action_type,
-                agent_name=data.get("agent_name"),
-                task_description=data.get("task_description", user_query),
-                reasoning=data.get("reasoning", "")
+            return Action(
+                action_type=ActionType.CALL_SPECIALIST,
+                agent_name="business_analyst",
+                task_description=user_query,
+                reasoning="Rule 1: Business Analyst first"
             )
+        
+        # Rule 2: If business_analyst called once, call again with refined query
+        if iteration == 2 and "business_analyst" in self.specialist_agents:
+            thought = "Getting additional perspectives from Business Analyst"
+            self.trace.add_thought(thought, iteration)
+            print(f"   💭 {thought}")
             
-            print(f"   ⚡ Action: {action.action_type.value}")
-            if action.agent_name:
-                print(f"   🤖 Agent: {action.agent_name}")
-                print(f"   📋 Task: {action.task_description[:80]}..." if len(action.task_description or "") > 80 else f"   📋 Task: {action.task_description}")
+            refined_query = f"Provide detailed analysis of: {user_query}"
+            if "risk" in query_lower:
+                refined_query += " Focus on risk factors, regulatory concerns, and vulnerabilities."
+            if "compet" in query_lower:
+                refined_query += " Focus on competitive dynamics, market positioning, and rivals."
             
-            return action
-            
-        except Exception as e:
-            print(f"   ⚠️ JSON parse error: {e}")
-            print(f"   📄 Response preview: {response[:200]}...")
-            
-            # Intelligent fallback based on iteration
-            if iteration == 1 and "business_analyst" in self.specialist_agents:
-                print(f"   ⤵️ Fallback: Calling business_analyst (iteration 1)")
-                self.trace.add_thought(f"Parse error, fallback to business_analyst", iteration)
-                return Action(
-                    action_type=ActionType.CALL_SPECIALIST,
-                    agent_name="business_analyst",
-                    task_description=user_query,
-                    reasoning="JSON parse error fallback"
-                )
-            else:
-                print(f"   ⤵️ Fallback: Finishing (iteration {iteration})")
-                self.trace.add_thought(f"Parse error on iteration {iteration}, finishing", iteration)
-                return Action(action_type=ActionType.FINISH)
+            return Action(
+                action_type=ActionType.CALL_SPECIALIST,
+                agent_name="business_analyst",
+                task_description=refined_query,
+                reasoning="Rule 2: Refined analysis"
+            )
+        
+        # Rule 3: After 2 calls or iteration 3+, finish
+        thought = f"Sufficient analysis gathered, ready to synthesize (iteration {iteration})"
+        self.trace.add_thought(thought, iteration)
+        print(f"   💭 {thought}")
+        
+        return Action(
+            action_type=ActionType.FINISH,
+            reasoning="Rule 3: Finish after sufficient iterations"
+        )
     
     def _execute_action(self, action: Action) -> Observation:
         """Execute the decided action"""
@@ -397,13 +259,6 @@ Return ONLY this JSON (no other text):
                 result=result,
                 success=True,
                 metadata={"agent": action.agent_name}
-            )
-        
-        elif action.action_type == ActionType.SYNTHESIZE:
-            return Observation(
-                action=action,
-                result="Ready to synthesize",
-                success=True
             )
         
         elif action.action_type == ActionType.FINISH:
@@ -436,22 +291,15 @@ Return ONLY this JSON (no other text):
                 traceback.print_exc()
                 return f"Error executing {agent_name}: {str(e)}"
         else:
-            # Placeholder for unimplemented agents
-            print(f"   ⏳ {agent_name} not yet implemented - using placeholder")
-            result = f"[{agent_name.upper()} ANALYSIS - PLACEHOLDER]\n\n"
-            result += f"Task: {task}\n\n"
-            result += f"This specialist would analyze: {task}\n\n"
-            result += "Key insights would include:\n"
-            result += "- Detailed domain-specific analysis\n"
-            result += "- Data-driven recommendations\n"
-            result += "- Expert interpretation\n\n"
-            result += "Note: This agent will be fully implemented in future versions.\n"
-            return result
+            print(f"   ⏳ {agent_name} not implemented")
+            return f"[{agent_name.upper()} PLACEHOLDER]\n\nThis agent would analyze: {task}"
     
     def _extract_document_sources(self, specialist_outputs: List[Dict]) -> Dict[int, str]:
         """
-        Extract actual document sources from specialist outputs
-        Returns mapping of citation number to document source
+        Extract document sources from specialist outputs
+        Supports multiple formats:
+        - --- SOURCE: filename.pdf (Page X) ---
+        - **Source:** [filename.pdf, Page X]
         """
         document_sources = {}
         citation_num = 1
@@ -459,22 +307,34 @@ Return ONLY this JSON (no other text):
         for output in specialist_outputs:
             content = output['result']
             
-            # Pattern to match: --- SOURCE: filename.pdf (Page X) ---
-            source_pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
-            sources = re.findall(source_pattern, content, re.IGNORECASE)
+            # Pattern 1: --- SOURCE: filename (Page X) ---
+            pattern1 = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            sources = re.findall(pattern1, content, re.IGNORECASE)
             
             for filename, page in sources:
                 filename = filename.strip()
                 page = page.strip()
                 source_key = f"{filename} - Page {page}"
                 
-                # Only add if not duplicate
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
                     citation_num += 1
             
-            # If no sources found but has content (placeholder agents), add agent as source
-            if not sources and "PLACEHOLDER" in content:
+            # Pattern 2: **Source:** [filename, Page X]
+            pattern2 = r'\*\*Source:\*\*\s*\[([^,]+),\s*Page\s*([^\]]+)\]'
+            sources2 = re.findall(pattern2, content, re.IGNORECASE)
+            
+            for filename, page in sources2:
+                filename = filename.strip()
+                page = page.strip()
+                source_key = f"{filename} - Page {page}"
+                
+                if source_key not in document_sources.values():
+                    document_sources[citation_num] = source_key
+                    citation_num += 1
+            
+            # If no sources found, add placeholder
+            if not sources and not sources2 and "PLACEHOLDER" in content:
                 agent_name = output['agent'].replace('_', ' ').title()
                 document_sources[citation_num] = f"{agent_name} (Placeholder Analysis)"
                 citation_num += 1
@@ -482,14 +342,12 @@ Return ONLY this JSON (no other text):
         return document_sources
     
     def _synthesize(self, user_query: str) -> str:
-        """Synthesize all observations into final report WITH DOCUMENT-BASED REFERENCES"""
-        num_obs = len(self.trace.observations)
+        """Synthesize with Perplexity (as synthesis tool, not orchestrator)"""
         specialist_calls = self.trace.get_specialist_calls()
         
-        print(f"\n📊 [SYNTHESIS] Combining insights from {num_obs} observations...")
+        print(f"\n📊 [SYNTHESIS] Combining insights...")
         print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
         
-        # Gather all specialist outputs
         specialist_outputs = []
         for obs in self.trace.observations:
             if obs.action.action_type == ActionType.CALL_SPECIALIST:
@@ -500,78 +358,28 @@ Return ONLY this JSON (no other text):
                 })
         
         if not specialist_outputs:
-            print("   ⚠️ No specialist outputs found")
-            reasoning_summary = "\n".join([
-                f"{i+1}. {thought.content}"
-                for i, thought in enumerate(self.trace.thoughts)
-            ])
-            return f"""## Analysis Summary
-
-Based on the ReAct reasoning process:
-
-{reasoning_summary}
-
-## Note
-
-No specialist agents were called. Ensure:
-- Business Analyst agent is registered
-- Documents exist in ./data/ folder
-- Check console for errors
-"""
+            return "## Analysis Summary\n\nNo specialist analysis available."
         
-        # Extract actual document sources
+        # Extract document sources
         document_sources = self._extract_document_sources(specialist_outputs)
-        
         print(f"   📚 Found {len(document_sources)} unique document sources")
         
-        # Create outputs text with SOURCE markers numbered
-        outputs_with_citations = []
-        for i, output in enumerate(specialist_outputs):
-            content = output['result']
-            
-            # Replace SOURCE markers with citation numbers
-            source_pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
-            
-            def replace_source(match):
-                filename = match.group(1).strip()
-                page = match.group(2).strip()
-                source_key = f"{filename} - Page {page}"
-                
-                for num, doc in document_sources.items():
-                    if doc == source_key:
-                        return f"[CITE:{num}]"
-                return match.group(0)
-            
-            content_with_cites = re.sub(source_pattern, replace_source, content, flags=re.IGNORECASE)
-            
-            outputs_with_citations.append({
-                'agent': output['agent'],
-                'task': output['task'],
-                'content': content_with_cites
-            })
-        
-        # Format outputs for synthesis
+        # Build synthesis prompt
         outputs_text = "\n\n".join([
-            f"{'='*60}\n"
-            f"SPECIALIST: {output['agent'].upper().replace('_', ' ')}\n"
-            f"{'='*60}\n"
-            f"Task: {output['task']}\n\n"
-            f"Analysis:\n{output['content']}\n"
-            for output in outputs_with_citations
+            f"{'='*60}\nSPECIALIST: {output['agent'].upper()}\n{'='*60}\n{output['result']}"
+            for output in specialist_outputs
         ])
         
-        # Create document reference list
         references_list = "\n".join([
             f"[{num}] {doc}"
             for num, doc in sorted(document_sources.items())
         ])
         
-        prompt = f"""Synthesize a research report from specialist outputs.
+        prompt = f"""Synthesize a comprehensive equity research report.
 
 QUERY: {user_query}
 
-SPECIALIST OUTPUTS:
-
+SPECIALIST ANALYSIS:
 {outputs_text}
 
 DOCUMENT SOURCES:
@@ -579,128 +387,100 @@ DOCUMENT SOURCES:
 
 Create a report with:
 1. Executive Summary (3-4 sentences)
-2. Detailed Analysis (organized by theme)
-3. Key Findings & Metrics
+2. Detailed Analysis (by theme)
+3. Key Findings
 4. Risk Factors
 5. Conclusion
-6. References section listing all document sources
+6. References section
 
-Cite facts using [1], [2], [3] corresponding to document sources above.
-DO NOT cite specialist agents - cite the actual documents.
+Cite facts using [1], [2], [3] matching the document sources above.
+DO NOT cite specialists - cite the actual source documents.
 """
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            print("   🔄 Generating synthesis...")
+            print("   🔄 Generating synthesis with Perplexity...")
             final_report = self.client.chat(messages, model="sonar", temperature=0.3)
             print("   ✅ Synthesis complete")
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            # Fallback: return raw outputs
-            fallback = f"""## Research Report
-
-{outputs_text}
-
----
-
-## 📚 References
-
-{references_list}
-
----
-
-**Note**: Synthesis failed ({str(e)}). Showing raw specialist outputs.
-"""
-            return fallback
+            return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## 📚 References\n\n{references_list}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
     
     def research(self, user_query: str) -> str:
-        """Main ReAct loop: Iteratively reason and act until task is complete"""
+        """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT-BASED EQUITY RESEARCH ORCHESTRATOR")
+        print("🔁 REACT-BASED RESEARCH ORCHESTRATOR (Rule-Based)")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
         print(f"📊 Registered Agents: {', '.join(self.specialist_agents.keys()) if self.specialist_agents else 'None'}")
         
-        # Reset trace for new query
         self.trace = ReActTrace()
         
-        # ReAct loop
         for iteration in range(1, self.max_iterations + 1):
             print("\n" + "-"*70)
             print(f"ITERATION {iteration}/{self.max_iterations}")
             print("-"*70)
             
-            # Step 1: Reason (Think)
-            action = self._reason(user_query, iteration)
+            # Rule-based reasoning (no Perplexity)
+            action = self._reason_rule_based(user_query, iteration)
             self.trace.add_action(action)
             
-            # Step 2: Act
             observation = self._execute_action(action)
             self.trace.add_observation(observation)
             
-            # Step 3: Observe & Decide if done
             obs_preview = observation.result[:150] + "..." if len(observation.result) > 150 else observation.result
             print(f"\n👁️ [OBSERVATION] {obs_preview}")
             
-            # Check if we should finish
-            if action.action_type in [ActionType.FINISH, ActionType.SYNTHESIZE]:
-                print(f"\n🎯 ReAct loop ending at iteration {iteration}/{self.max_iterations}")
+            if action.action_type == ActionType.FINISH:
+                print(f"\n🎯 Loop ending at iteration {iteration}")
                 break
         
-        # Final synthesis
         print("\n" + "="*70)
         print("📝 FINAL SYNTHESIS")
         print("="*70)
         
         final_report = self._synthesize(user_query)
         
-        # Summary stats
         print("\n" + "="*70)
         print("📈 ORCHESTRATION SUMMARY")
         print("="*70)
-        print(f"Iterations completed: {len(self.trace.thoughts)}")
-        print(f"Specialists called: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
-        print(f"Total observations: {len(self.trace.observations)}")
+        print(f"Iterations: {len(self.trace.thoughts)}")
+        print(f"Specialists: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
         print("="*70)
         
         return final_report
     
     def get_trace_summary(self) -> str:
-        """Get a readable summary of the ReAct trace"""
         return self.trace.get_history_summary()
 
 
 def main():
-    """Demo of ReAct-based orchestration"""
-    
     api_key = os.getenv("PERPLEXITY_API_KEY")
     if not api_key:
-        print("⚠️ Please set PERPLEXITY_API_KEY environment variable")
-        print("   export PERPLEXITY_API_KEY='your-key'")
+        print("⚠️ Please set PERPLEXITY_API_KEY")
         return
     
     try:
-        orchestrator = ReActOrchestrator(max_iterations=5)
+        orchestrator = ReActOrchestrator(max_iterations=3)
         
         if not orchestrator.test_connection():
-            print("\n❌ Failed to connect to Perplexity API")
+            print("\n❌ Failed to connect")
             return
-            
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 ReAct-Based Orchestrator Ready")
-    print("\nAvailable specialist agents:")
-    for name, info in ReActOrchestrator.SPECIALIST_AGENTS.items():
+    print("\n🚀 Rule-Based Orchestrator Ready")
+    print("\nAvailable agents:")
+    for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
         print(f"  {status} {name}")
     
     while True:
         print("\n" + "="*70)
-        user_query = input("\n💬 Your research question (or 'quit'): ")
+        user_query = input("\n💬 Research question (or 'quit'): ")
         
         if user_query.lower() in ['quit', 'exit', 'q']:
             print("\n👋 Goodbye!")
@@ -711,19 +491,10 @@ def main():
         
         try:
             final_report = orchestrator.research(user_query)
-            
             print("\n" + "="*70)
             print("📄 FINAL REPORT")
             print("="*70)
             print(f"\n{final_report}\n")
-            
-            show_trace = input("\n🔍 Show ReAct trace? (y/n): ").lower()
-            if show_trace == 'y':
-                print("\n" + "="*70)
-                print("🔁 REACT TRACE")
-                print("="*70)
-                print(orchestrator.get_trace_summary())
-            
         except Exception as e:
             print(f"\n❌ Error: {str(e)}")
             import traceback
