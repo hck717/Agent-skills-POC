@@ -13,7 +13,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Set API keys
-export EODHD_API_KEY="6957671cac2858.27368157"
+export EODHD_API_KEY=""
 
 # 3. Start Ollama
 ollama serve
