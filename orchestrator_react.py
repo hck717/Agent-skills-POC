@@ -86,6 +86,14 @@ class ReActTrace:
 class PerplexityClient:
     """Client for Perplexity API interactions"""
     
+    # Valid Perplexity Sonar models (as of 2026)
+    VALID_MODELS = {
+        "sonar": "Fast, cost-efficient search and Q&A (128k context)",
+        "sonar-pro": "Deep retrieval for complex queries (200k context)",
+        "sonar-reasoning-pro": "Multi-step logic and chain-of-thought (128k context)",
+        "sonar-deep-research": "Long-form exhaustive synthesis (128k context)"
+    }
+    
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
         if not self.api_key:
@@ -97,8 +105,23 @@ class PerplexityClient:
             "Content-Type": "application/json"
         }
     
-    def chat(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-small-128k-online", temperature: float = 0.2) -> str:
-        """Send chat request to Perplexity API"""
+    def chat(self, messages: List[Dict[str, str]], model: str = "sonar-pro", temperature: float = 0.2) -> str:
+        """Send chat request to Perplexity API
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            model: Sonar model to use (sonar, sonar-pro, sonar-reasoning-pro, sonar-deep-research)
+            temperature: Sampling temperature (0-1)
+            
+        Returns:
+            Response content string
+        """
+        # Validate model
+        if model not in self.VALID_MODELS:
+            print(f"⚠️ Warning: Model '{model}' not in known list. Using 'sonar-pro' instead.")
+            print(f"Valid models: {', '.join(self.VALID_MODELS.keys())}")
+            model = "sonar-pro"
+        
         payload = {
             "model": model,
             "messages": messages,
@@ -116,12 +139,18 @@ class PerplexityClient:
             
             # Better error handling
             if response.status_code == 400:
-                error_detail = response.json().get('error', {}).get('message', 'Unknown error')
-                raise Exception(f"Bad Request (400): {error_detail}. Check API key and model name.")
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+                    raise Exception(f"Bad Request (400): {error_msg}")
+                except:
+                    raise Exception(f"Bad Request (400): Check API key and model name. Valid models: {', '.join(self.VALID_MODELS.keys())}")
             elif response.status_code == 401:
-                raise Exception("Unauthorized (401): Invalid API key")
+                raise Exception("Unauthorized (401): Invalid API key. Get a valid key from https://www.perplexity.ai/settings/api")
             elif response.status_code == 429:
-                raise Exception("Rate Limit (429): Too many requests")
+                raise Exception("Rate Limit (429): Too many requests. Please wait and try again.")
+            elif response.status_code == 403:
+                raise Exception("Forbidden (403): API access denied. Check your subscription plan.")
             
             response.raise_for_status()
             
@@ -131,10 +160,33 @@ class PerplexityClient:
             
             return result["choices"][0]["message"]["content"]
             
+        except requests.exceptions.Timeout:
+            raise Exception("Request timeout (120s). The query may be too complex.")
         except requests.exceptions.RequestException as e:
-            raise Exception(f"API request failed: {str(e)}")
+            raise Exception(f"Network error: {str(e)}")
         except Exception as e:
+            if "Perplexity API error" in str(e):
+                raise
             raise Exception(f"Perplexity API error: {str(e)}")
+    
+    def test_connection(self) -> bool:
+        """Test if API connection works
+        
+        Returns:
+            True if connection successful, False otherwise
+        """
+        try:
+            print("🔌 Testing Perplexity API connection...")
+            messages = [{"role": "user", "content": "Say 'OK' if you can read this."}]
+            response = self.chat(messages, model="sonar", temperature=0.0)
+            if response:
+                print("✅ Connection successful!")
+                print(f"📝 Response: {response[:100]}")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Connection failed: {str(e)}")
+            return False
 
 
 class ReActOrchestrator:
@@ -187,6 +239,10 @@ class ReActOrchestrator:
         """Register a specialist agent implementation"""
         self.specialist_agents[agent_name] = agent_instance
         print(f"✅ Registered specialist: {agent_name}")
+    
+    def test_connection(self) -> bool:
+        """Test Perplexity API connection"""
+        return self.client.test_connection()
     
     def _create_reasoning_prompt(self, user_query: str, iteration: int, history: str) -> str:
         """Create prompt for reasoning step"""
@@ -258,7 +314,8 @@ Provide ONLY valid JSON, no other text."""
         messages = [{"role": "user", "content": prompt}]
         
         try:
-            response = self.client.chat(messages, temperature=0.1)
+            # Use sonar-pro for reasoning (better for complex tasks)
+            response = self.client.chat(messages, model="sonar-pro", temperature=0.1)
         except Exception as e:
             print(f"   ⚠️ Error calling Perplexity API: {str(e)}")
             # Fallback: finish and synthesize
@@ -428,7 +485,8 @@ Provide a professional, well-structured equity research report."""
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            final_report = self.client.chat(messages, temperature=0.3)
+            # Use sonar-pro for synthesis (better quality)
+            final_report = self.client.chat(messages, model="sonar-pro", temperature=0.3)
             print("   ✅ Synthesis complete")
             return final_report
         except Exception as e:
@@ -494,6 +552,12 @@ def main():
     # Initialize ReAct orchestrator
     try:
         orchestrator = ReActOrchestrator(max_iterations=5)
+        
+        # Test connection
+        if not orchestrator.test_connection():
+            print("\n❌ Failed to connect to Perplexity API. Please check your API key.")
+            return
+            
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
