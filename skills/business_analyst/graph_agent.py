@@ -1,6 +1,7 @@
 import os
 import operator
 import re
+import shutil
 from typing import Annotated, TypedDict, List
 
 # LangChain & Graph
@@ -178,19 +179,180 @@ class BusinessAnalystGraphAgent:
             self.vectorstores[collection_name] = Chroma(collection_name=collection_name, embedding_function=self.embeddings, persist_directory=self.db_path)
         return self.vectorstores[collection_name]
 
-    def ingest_data(self):
-        print(f"📂 Scanning {self.data_path}...")
-        if not os.path.exists(self.data_path): os.makedirs(self.data_path); return
+    def reset_vector_db(self):
+        """
+        ⚠️ DANGER: Delete all vector data in ChromaDB
+        This will remove all embedded documents and you'll need to re-ingest
+        """
+        print(f"\n🗑️ RESETTING VECTOR DATABASE...")
+        print(f"   Path: {self.db_path}")
+        
+        try:
+            # Close all vectorstore connections
+            self.vectorstores = {}
+            
+            # Delete the entire ChromaDB directory
+            if os.path.exists(self.db_path):
+                shutil.rmtree(self.db_path)
+                print(f"   ✅ Deleted {self.db_path}")
+            else:
+                print(f"   ⚠️ Directory doesn't exist: {self.db_path}")
+            
+            # Recreate empty directory
+            os.makedirs(self.db_path, exist_ok=True)
+            print(f"   ✅ Created fresh directory")
+            
+            return True, "Vector database reset successfully"
+        except Exception as e:
+            print(f"   ❌ Error: {str(e)}")
+            return False, f"Failed to reset: {str(e)}"
+
+    def get_database_stats(self):
+        """
+        Get statistics about the current vector database
+        """
+        stats = {}
+        total_chunks = 0
+        
+        if not os.path.exists(self.data_path):
+            return {"error": "Data path doesn't exist"}
+        
         for folder in [f.path for f in os.scandir(self.data_path) if f.is_dir()]:
             ticker = os.path.basename(folder).upper()
-            print(f"Processing {ticker}...")
+            try:
+                vs = self._get_vectorstore(f"docs_{ticker}")
+                count = vs._collection.count()
+                stats[ticker] = count
+                total_chunks += count
+            except:
+                stats[ticker] = 0
+        
+        stats['TOTAL'] = total_chunks
+        return stats
+
+    def ingest_data(self):
+        """
+        📂 Ingest documents from data folder
+        Supports: PDF (.pdf), Word (.docx), Text (.txt, .md)
+        """
+        print(f"\n📂 Scanning {self.data_path}...")
+        
+        if not os.path.exists(self.data_path):
+            os.makedirs(self.data_path)
+            print(f"   ⚠️ Created empty data directory: {self.data_path}")
+            return
+        
+        folders = [f.path for f in os.scandir(self.data_path) if f.is_dir()]
+        
+        if not folders:
+            print(f"   ⚠️ No company folders found in {self.data_path}")
+            print(f"   💡 Create folders like: ./data/AAPL/, ./data/TSLA/, etc.")
+            return
+        
+        total_docs = 0
+        total_chunks = 0
+        
+        for folder in folders:
+            ticker = os.path.basename(folder).upper()
+            print(f"\n📊 Processing {ticker}...")
+            print(f"   Folder: {folder}")
+            
             all_docs = []
-            try: all_docs.extend(DirectoryLoader(folder, glob="**/*.pdf", loader_cls=PyPDFLoader).load())
-            except: pass
-            if not all_docs: continue
-            splits = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200).split_documents(all_docs)
-            self._get_vectorstore(f"docs_{ticker}").add_documents(splits)
-            print(f"   ✅ Indexed {len(splits)} chunks.")
+            doc_types = []
+            
+            # Load PDF files
+            try:
+                pdf_loader = DirectoryLoader(
+                    folder, 
+                    glob="**/*.pdf", 
+                    loader_cls=PyPDFLoader,
+                    show_progress=False
+                )
+                pdf_docs = pdf_loader.load()
+                if pdf_docs:
+                    all_docs.extend(pdf_docs)
+                    doc_types.append(f"{len(pdf_docs)} PDFs")
+                    print(f"   ✅ Loaded {len(pdf_docs)} PDF documents")
+            except Exception as e:
+                print(f"   ⚠️ PDF loading error: {e}")
+            
+            # Load Word documents (.docx)
+            try:
+                docx_loader = DirectoryLoader(
+                    folder, 
+                    glob="**/*.docx", 
+                    loader_cls=Docx2txtLoader,
+                    show_progress=False
+                )
+                docx_docs = docx_loader.load()
+                if docx_docs:
+                    all_docs.extend(docx_docs)
+                    doc_types.append(f"{len(docx_docs)} Word docs")
+                    print(f"   ✅ Loaded {len(docx_docs)} Word documents")
+            except Exception as e:
+                print(f"   ⚠️ Word doc loading error: {e}")
+            
+            # Load text files (.txt, .md)
+            try:
+                text_loader = DirectoryLoader(
+                    folder, 
+                    glob="**/*.txt", 
+                    loader_cls=TextLoader,
+                    show_progress=False
+                )
+                txt_docs = text_loader.load()
+                if txt_docs:
+                    all_docs.extend(txt_docs)
+                    doc_types.append(f"{len(txt_docs)} text files")
+                    print(f"   ✅ Loaded {len(txt_docs)} text files")
+            except Exception as e:
+                print(f"   ⚠️ Text file loading error: {e}")
+            
+            # Load markdown files
+            try:
+                md_loader = DirectoryLoader(
+                    folder, 
+                    glob="**/*.md", 
+                    loader_cls=TextLoader,
+                    show_progress=False
+                )
+                md_docs = md_loader.load()
+                if md_docs:
+                    all_docs.extend(md_docs)
+                    doc_types.append(f"{len(md_docs)} markdown files")
+                    print(f"   ✅ Loaded {len(md_docs)} markdown files")
+            except Exception as e:
+                print(f"   ⚠️ Markdown loading error: {e}")
+            
+            if not all_docs:
+                print(f"   ⚠️ No supported documents found for {ticker}")
+                print(f"   💡 Supported formats: .pdf, .docx, .txt, .md")
+                continue
+            
+            # Split into chunks
+            print(f"   🔪 Splitting documents into chunks...")
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=4000, 
+                chunk_overlap=200
+            )
+            splits = splitter.split_documents(all_docs)
+            
+            # Add to vector store
+            print(f"   🧮 Embedding {len(splits)} chunks...")
+            vs = self._get_vectorstore(f"docs_{ticker}")
+            vs.add_documents(splits)
+            
+            print(f"   ✅ Indexed {len(splits)} chunks from {', '.join(doc_types)}")
+            
+            total_docs += len(all_docs)
+            total_chunks += len(splits)
+        
+        print(f"\n{'='*60}")
+        print(f"✅ INGESTION COMPLETE")
+        print(f"   Total documents: {total_docs}")
+        print(f"   Total chunks: {total_chunks}")
+        print(f"   Database: {self.db_path}")
+        print(f"{'='*60}\n")
 
     def analyze(self, query: str):
         print(f"🤖 User Query: '{query}'")
