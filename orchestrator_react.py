@@ -3,12 +3,13 @@
 ReAct-based Multi-Agent Orchestrator
 
 Rule-based orchestration with LOCAL LLM synthesis for professional equity research.
+Version: 2.0 - 10/10 Quality Standard
 """
 
 import os
 import json
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
@@ -99,12 +100,12 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 3500  # Increased for comprehensive reports
+                "num_predict": 4000  # Increased for comprehensive reports
             }
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=120)
+            response = requests.post(url, json=payload, timeout=150)
             response.raise_for_status()
             result = response.json()
             return result["message"]["content"]
@@ -328,18 +329,73 @@ class ReActOrchestrator:
             for title, url in web_sources:
                 title = title.strip()
                 url = url.strip()
-                source_key = f"{title} - {url}"
+                source_key = f"{title}||{url}"  # Use || as separator for clean splitting later
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
-                    print(f"      [{citation_num}] {source_key}")
+                    print(f"      [{citation_num}] {title[:60]}...")
                     citation_num += 1
         
         return document_sources
     
+    def _validate_citation_quality(self, report: str, total_sources: int) -> Tuple[int, List[str]]:
+        """
+        🔥 NEW: Validate citation quality in the final report
+        
+        Returns:
+            (quality_score, list_of_warnings)
+        """
+        warnings = []
+        
+        # Check 1: Count total citations
+        citations = re.findall(r'\[\d+\]', report)
+        citation_count = len(citations)
+        
+        if citation_count == 0:
+            warnings.append("❌ CRITICAL: No citations found in report")
+            return 0, warnings
+        
+        # Check 2: Find paragraphs without citations
+        sections = report.split('\n\n')
+        uncited_paragraphs = 0
+        
+        for section in sections:
+            # Skip headers, empty lines, references section
+            if (section.strip() and 
+                not section.startswith('#') and 
+                'References' not in section and
+                len(section) > 100 and
+                not re.search(r'\[\d+\]', section)):
+                uncited_paragraphs += 1
+                warnings.append(f"⚠️ Unsourced paragraph: {section[:80]}...")
+        
+        # Check 3: Ensure Investment Thesis has citations
+        if '## Investment Thesis' in report:
+            thesis_section = report.split('## Investment Thesis')[1].split('##')[0] if '## Investment Thesis' in report else ""
+            thesis_citations = len(re.findall(r'\[\d+\]', thesis_section))
+            if thesis_citations < 3:
+                warnings.append("⚠️ Investment Thesis has insufficient citations (< 3)")
+        
+        # Check 4: Ensure valuation metrics are cited
+        valuation_keywords = ['P/E', 'EV/', 'market cap', 'valuation', 'price target', '$\d+B', '\d+%']
+        for keyword in valuation_keywords:
+            matches = re.finditer(keyword, report, re.IGNORECASE)
+            for match in matches:
+                # Check if citation follows within 50 chars
+                context = report[match.end():match.end()+50]
+                if not re.search(r'\[\d+\]', context):
+                    warnings.append(f"⚠️ Valuation metric '{keyword}' not cited: {report[match.start():match.end()+30]}")
+        
+        # Calculate score
+        citation_density = citation_count / max(len(sections), 1)
+        penalty = min(len(warnings) * 10, 50)  # Max 50% penalty
+        quality_score = max(0, 100 - penalty - (100 if uncited_paragraphs > 3 else 0))
+        
+        return quality_score, warnings
+    
     def _synthesize(self, user_query: str) -> str:
         """
-        Synthesize with LOCAL LLM - Professional Equity Research Report
+        Synthesize with LOCAL LLM - Professional Equity Research Report (10/10 Quality)
         """
         specialist_calls = self.trace.get_specialist_calls()
         current_date = datetime.now().strftime("%B %d, %Y")
@@ -384,7 +440,7 @@ class ReActOrchestrator:
                     # Web pattern
                     title = match.group(1).strip()
                     url = match.group(2).strip()
-                    source_key = f"{title} - {url}"
+                    source_key = f"{title}||{url}"
                 
                 for num, doc in document_sources.items():
                     if doc == source_key:
@@ -410,14 +466,14 @@ class ReActOrchestrator:
             for output in outputs_with_cites
         ])
         
-        # Create document reference list
+        # Create document reference list for prompt
         references_list = "\n".join([
             f"[SOURCE-{num}] = {doc}"
             for num, doc in sorted(document_sources.items())
         ])
         
-        # 🔥 PROFESSIONAL EQUITY RESEARCH SYNTHESIS PROMPT
-        prompt = f"""You are a Senior Equity Research Analyst synthesizing a professional research report.
+        # 🔥 10/10 PROFESSIONAL EQUITY RESEARCH SYNTHESIS PROMPT
+        prompt = f"""You are a Senior Equity Research Analyst at a top-tier investment bank synthesizing an institutional-grade research report.
 
 REPORT DATE: {current_date}
 CLIENT QUERY: {user_query}
@@ -433,106 +489,164 @@ SOURCE REFERENCE MAP:
 {references_list}
 
 ==========================================================================
-PROFESSIONAL REPORT STRUCTURE
+PROFESSIONAL REPORT STRUCTURE (MANDATORY)
 ==========================================================================
 
 ## Executive Summary
-[2-3 sentences: Key findings, investment implications, temporal context]
+[2-3 sentences with investment thesis and temporal context. MUST cite key metrics.]
 
 ## Investment Thesis
-[3-4 bullet points: Core reasons to consider the stock, backed by data]
+[3-4 SPECIFIC bullet points - EVERY point MUST have data + citations]
 
-## Business Overview (Historical Context)
-[Per FY2025 10-K data - cite with [X] for 10-K sources]
-- Business model and revenue streams
-- Market position and competitive advantages
-- Key financial metrics from latest filing
+EXAMPLE FORMAT (FOLLOW THIS):
+- **Revenue Growth Trajectory**: FY2025 revenue of $394B [1] with Q1 2026 showing 8.2% YoY growth [8], driven by Services segment margin expansion from 68.2% [2] to 71.5% per recent results [9]
+- **Product Innovation Pipeline**: iPhone 15 launched [3], Vision Pro AR platform generating $2.1B initial quarter [10], foldable iPhone pipeline for H2 2026 [11] maintains competitive differentiation
+- **Market Leadership**: Global smartphone market share of 23.4% [4], iOS ecosystem with 2.2B active devices [5], Services ARR growth of 15.8% YoY [9]
+- **Valuation Context**: Trading at 27.5x NTM P/E [12] vs sector average of 22.1x, justified by 12.3% revenue CAGR and 43.8% gross margins [1]
 
-## Recent Developments (Current Period)
-[Per Q4 2025 - Q1 2026 web sources - cite with [Y] for web sources]
-- Latest product launches and strategic initiatives  
-- Recent financial performance vs expectations
-- Market sentiment and analyst opinion shifts
-- Emerging competitive dynamics
+## Business Overview (Historical Context - Per FY2025 10-K)
+[Cite EVERY financial metric, business line, and market position claim]
+- Revenue streams with exact figures and percentages [cite]
+- Market position with specific market share data [cite]
+- Competitive advantages with supporting evidence [cite]
+
+## Recent Developments (Current Period - Q4 2025 to Q1 2026)
+[Cite EVERY product launch, financial update, and market development]
+- Product launches with dates and specifications [cite web sources]
+- Financial performance vs analyst expectations [cite web sources]
+- Competitive dynamics and market share shifts [cite web sources]
+- Management commentary and guidance updates [cite web sources]
 
 ## Risk Analysis
-### Historical Risks (Per 10-K) [cite 10-K sources]
-- Disclosed risk factors from SEC filings
+### Historical Risks (Per 10-K)
+[List 3-5 risks, EACH with citation]
+- Risk 1: [Specific risk with impact quantification] [cite]
+- Risk 2: [Specific risk with impact quantification] [cite]
 
-### Emerging Risks (Current) [cite web sources]
-- New competitive threats
-- Regulatory developments
-- Market condition changes
+### Emerging Risks (Current)
+[List 2-4 new risks, EACH with citation]
+- New risk 1: [Specific development] [cite web]
+- New risk 2: [Specific development] [cite web]
 
 ## Valuation Context
-[If available: P/E, EV/Sales, growth rates - cite sources]
-- Historical valuation metrics [10-K sources]
-- Current market valuation [web sources]
-- Analyst price targets [web sources]
+[EVERY metric MUST be cited]
+- Historical metrics: Revenue $XXB [cite], EBITDA margin XX% [cite], FCF $XXB [cite]
+- Current valuation: P/E XX.Xx [cite], EV/Sales X.Xx [cite], Market cap $X.XTn [cite]
+- Analyst consensus: Average price target $XXX [cite], High/Low range [cite]
 
 ## Conclusion
-[2-3 sentences: Balanced view considering both historical fundamentals and current developments]
+[2-3 sentences synthesizing risk-return profile with citations]
 
 ## Data Quality Notice
 ⚠️ **Temporal Distinction**:
-- 10-K data: Historical (6-12 months old as of filing date)
-- Web data: Current market developments (last 3 months)
-- Investment decisions should consider both layers
+- 10-K data: FY2025 filed October 31, 2025 (historical)
+- Web data: Q4 2025 - Q1 2026 (current as of {current_date})
+- Investors should verify current data before investment decisions
 
 ## References
-[List ALL citations with clear temporal markers]
+[Will be auto-generated - DO NOT include in your response]
 
 ==========================================================================
-CITATION REQUIREMENTS (CRITICAL)
+🔥 CITATION REQUIREMENTS (100% COMPLIANCE MANDATORY) 🔥
 ==========================================================================
 
-1. TEMPORAL MARKERS (Mandatory):
-   - 10-K data: "Per the FY2025 10-K [1]..."
-   - Web data: "As of Q1 2026 [8]..." or "Recent reports indicate [9]..."
+1. **EVERY FACTUAL CLAIM MUST BE CITED**
+   ✅ "Revenue reached $394B per FY2025 10-K [1]"
+   ❌ "Revenue reached $394B" (NO CITATION = UNACCEPTABLE)
 
-2. CITATION DENSITY:
-   - Every factual claim = citation
-   - Every metric/number = citation  
-   - Every risk factor = citation
-   - Aim for 2-3 citations per paragraph
+2. **EVERY NUMBER MUST BE CITED**
+   ✅ "Market cap of $2.4T [9]"
+   ❌ "Market cap of $2.4T" (NO CITATION = UNACCEPTABLE)
 
-3. FORMAT:
+3. **TEMPORAL MARKERS (MANDATORY)**
+   - 10-K: "Per FY2025 10-K [1]" or "As disclosed in annual filing [2]"
+   - Web: "As of Q1 2026 [8]" or "Recent reports indicate [9]" or "Per January 2026 analyst note [10]"
+
+4. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
+   - Each bullet point needs 2-3 citations minimum
+   - Mix historical [1-7] and current [8+] sources
+
+5. **FORMAT**
    - Replace [SOURCE-X] with [X]
-   - Example: "Revenue reached $394B per FY2025 10-K [1], while Q1 2026 guidance suggests 8% YoY growth [8]."
+   - Space before citation: "text [1]" not "text[1]"
+   - Multiple citations: "text [1][2][3]" not "text [1,2,3]"
 
-4. PROFESSIONAL TONE:
-   - Concise, data-driven, specific
-   - Use exact figures: "15.2%" not "around 15%"
-   - Attribution: "Goldman Sachs projects..." not "analysts think..."
-   - Objective: Present data, avoid speculation
+6. **CITATION DENSITY TARGET**
+   - Minimum 3 citations per section
+   - Every paragraph with data = citation
+   - Valuation Context section = 100% citation coverage
 
-5. MIXING SOURCES:
-   - Contrast historical vs current: "While FY2025 showed... [1], recent developments indicate... [7]"
-   - Show progression: "Margins were 25.3% in FY2025 [2], expanding to 26.1% in Q4 2025 [9]"
+7. **PROFESSIONAL TONE**
+   - Exact figures: "15.23%" not "around 15%" or "approximately 15%"
+   - Attribution: "Goldman Sachs (January 2026) projects [X]" not "analysts think"
+   - Objectivity: "Data indicates" not "we believe" or "I think"
+   - Temporal precision: "Q1 2026" not "recently" or "soon"
+
+8. **EXAMPLES OF PERFECT CITATION**
+   ✅ "iPhone revenue of $201.2B represented 52.1% of total revenue per FY2025 10-K [1], with unit sales of 234M devices [2]. Q1 2026 preliminary data suggests 8.2% YoY growth driven by China market recovery [8], with Goldman Sachs raising estimates to 245M units for FY2026 [9]."
+   
+   ✅ "The company faces supply chain concentration risk with 67% of manufacturing in China [3]. Recent geopolitical tensions have prompted management to announce diversification plans, targeting 30% of production in India by 2027 [10]."
 
 ==========================================================================
-GENERATE REPORT NOW
+⚠️ QUALITY CONTROL - YOUR REPORT WILL BE REJECTED IF:
+==========================================================================
+- Any metric lacks citation
+- Investment Thesis has < 8 citations
+- Any paragraph with data lacks citation
+- Generic statements without specific data
+- Temporal markers missing
+- Web sources not distinguished from 10-K sources
+
+==========================================================================
+GENERATE 10/10 INSTITUTIONAL-GRADE REPORT NOW
 ==========================================================================
 
-Provide a professional equity research report following the structure above.
-Cite FREQUENTLY with proper temporal markers.
+Provide a report meeting EVERY requirement above.
+Cite OBSESSIVELY. Every claim, every number, every statement.
 """
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            print("   🔄 Generating professional equity research synthesis...")
-            final_report = self.client.chat(messages, temperature=0.2)  # Slightly higher for better prose
+            print("   🔄 Generating 10/10 professional equity research synthesis...")
+            final_report = self.client.chat(messages, temperature=0.15)  # Lower temp for precision
             print("   ✅ Synthesis complete")
             
-            # Post-process: Ensure References section exists
-            if len(document_sources) > 0 and "## References" not in final_report:
-                refs = "\n\n## References\n\n" + "\n".join([
-                    f"[{num}] {doc}"
-                    for num, doc in sorted(document_sources.items())
-                ])
+            # 🔥 POST-PROCESSING: Clean up [SOURCE-X] to [X]
+            final_report = re.sub(r'\[SOURCE-(\d+)\]', r'[\1]', final_report)
+            
+            # 🔥 POST-PROCESSING: Add properly formatted References
+            if len(document_sources) > 0:
+                # Remove any existing References section
+                if "## References" in final_report:
+                    final_report = final_report.split("## References")[0]
+                
+                refs = "\n\n## References\n\n"
+                for num, doc in sorted(document_sources.items()):
+                    if "||" in doc:  # Web source
+                        title, url = doc.split("||", 1)
+                        refs += f"[{num}] {title} - {url}\n"
+                    else:  # Document source
+                        refs += f"[{num}] {doc}\n"
+                
                 final_report += refs
             
+            # 🔥 QUALITY VALIDATION
+            print("\n   🔍 Running quality validation...")
+            quality_score, warnings = self._validate_citation_quality(final_report, len(document_sources))
+            
+            print(f"   📊 Citation Quality Score: {quality_score}/100")
+            
+            if warnings:
+                print(f"   ⚠️ Found {len(warnings)} quality issues:")
+                for warning in warnings[:5]:  # Show first 5
+                    print(f"      {warning}")
+                if len(warnings) > 5:
+                    print(f"      ... and {len(warnings)-5} more")
+            else:
+                print("   ✅ Perfect citation quality!")
+            
             return final_report
+            
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
             # Fallback
@@ -541,7 +655,8 @@ Cite FREQUENTLY with proper temporal markers.
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR")
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.0")
+        print("   10/10 Professional Quality Standard")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -598,7 +713,8 @@ def main():
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Professional Equity Research Orchestrator Ready")
+    print("\n🚀 Professional Equity Research Orchestrator v2.0 Ready")
+    print("   10/10 Quality Standard - Institutional Grade")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
