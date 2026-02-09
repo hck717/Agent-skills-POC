@@ -1,19 +1,88 @@
-# Python virtual environment
-.venv/
-venv/
-env/
-
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+PIPFILE.lock
 
-# Vector Database (Local Storage)
-storage/
-my_financial_agent/storage/chroma_db/
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+.env
 
-# OS specific files
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
 
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
 # Environment variables
-.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# ChromaDB
+storage/chroma_db/*
+!storage/chroma_db/.gitkeep
+
+# Data files (PDFs, CSVs)
+data/*.pdf
+data/*.csv
+!data/.gitkeep
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# API keys (extra safety)
+*_API_KEY*
+*.key
+*.pem
