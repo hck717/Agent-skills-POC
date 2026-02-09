@@ -4,32 +4,45 @@
 
 ## 🎯 Quick Start
 
-### ReAct-Based Multi-Agent System (Recommended)
+### Streamlit UI (Easiest - Recommended for New Users)
 
 ```bash
-# 1. Setup environment
-/opt/homebrew/bin/python3.11 -m venv .venv
-source .venv/bin/activate
+# 1. Setup
 pip install -r requirements.txt
+export PERPLEXITY_API_KEY="your-key"
 
-# 2. Set API keys
-export PERPLEXITY_API_KEY="your-key"    # For ReAct orchestrator
-export EODHD_API_KEY="your-key"         # Optional, for market data
-
-# 3. Start Ollama (for Business Analyst agent)
+# 2. Start Ollama
 ollama serve
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 
-# 4. Run ReAct orchestrator
+# 3. Run Streamlit UI
+streamlit run app.py
+# Opens automatically at http://localhost:8501
+```
+
+📖 **See:** [UI_GUIDE.md](UI_GUIDE.md) for complete UI documentation.
+
+### CLI - ReAct Multi-Agent System
+
+```bash
+# Same setup as above, then:
 python main_orchestrated.py
 ```
 
-### Single-Agent Mode (Business Analyst Only)
+### CLI - Single Agent Mode
 
 ```bash
 python main.py
 ```
+
+## 🖥️ Three Ways to Use
+
+| Mode | Best For | Interface |
+|------|----------|----------|
+| **Streamlit UI** | Visual exploration, demos | Web browser at `localhost:8501` |
+| **CLI Multi-Agent** | Development, debugging | Terminal with ReAct trace |
+| **CLI Single Agent** | Quick 10-K analysis | Terminal |
 
 ## 🔄 What is ReAct?
 
@@ -48,12 +61,14 @@ This enables **dynamic adaptation**, **self-correction**, and **early stopping**
 
 ```
 Agent-skills-POC/
-├── main_orchestrated.py             # 🔥 ReAct multi-agent entry point
+├── app.py                           # 🌐 Streamlit UI
+├── main_orchestrated.py             # 🔥 ReAct CLI (multi-agent)
+├── main.py                          # Single agent CLI
 ├── orchestrator_react.py            # ReAct orchestration engine
 ├── orchestrator.py                  # Legacy planner
-├── main.py                          # Single agent mode
 │
-├── REACT_FRAMEWORK.md               # 📚 ReAct guide
+├── UI_GUIDE.md                      # 📖 Streamlit UI guide
+├── REACT_FRAMEWORK.md               # 📚 ReAct framework guide
 ├── SPECIALIST_AGENTS.md             # Agent specifications
 ├── ORCHESTRATOR_README.md           # Legacy docs
 │
@@ -107,7 +122,32 @@ Final Report + Trace
 
 ## 🚀 Usage
 
-### ReAct Orchestration
+### Streamlit UI (Recommended)
+
+```bash
+streamlit run app.py
+```
+
+**Features:**
+- 🖱️ Point-and-click interface
+- 📊 Real-time metrics (iterations, duration)
+- 🔍 Toggle ReAct trace visibility
+- 📚 Query history with expand/collapse
+- 💾 Download reports as markdown
+- ⚙️ Adjustable max iterations slider
+- 🎨 Color-coded status indicators
+
+**Screenshot Flow:**
+```
+1. Click "🚀 Initialize System" (sidebar)
+2. Type query in text area
+3. Click "🔍 Analyze"
+4. View results with metrics
+5. Toggle "🔍 Show ReAct Trace" to see reasoning
+6. Download or continue with new queries
+```
+
+### CLI - ReAct Orchestration
 
 ```python
 from orchestrator_react import ReActOrchestrator
@@ -175,9 +215,19 @@ print(orchestrator.get_trace_summary())  # View reasoning
 - Complete reasoning trace
 - Context-aware synthesis
 
+### Streamlit UI (✅ Implemented)
+- Interactive web interface
+- Real-time progress tracking
+- Visual ReAct trace display
+- Session-based history
+- Markdown report download
+- Responsive design
+
 ## 🛠️ Tech Stack
 
 **Core:** LangGraph, LangChain, Ollama (Qwen 2.5), ChromaDB, Perplexity API
+
+**UI:** Streamlit
 
 **ML/NLP:** BERT Cross-Encoder, Nomic Embeddings, Sentence Transformers
 
@@ -195,14 +245,19 @@ print(orchestrator.get_trace_summary())  # View reasoning
 
 ## 📚 Documentation
 
+- **[UI_GUIDE.md](UI_GUIDE.md)** - Streamlit interface guide
 - **[REACT_FRAMEWORK.md](REACT_FRAMEWORK.md)** - Complete ReAct guide
 - **[SPECIALIST_AGENTS.md](SPECIALIST_AGENTS.md)** - Agent specs
 - **[ORCHESTRATOR_README.md](ORCHESTRATOR_README.md)** - Legacy docs
 
 ## 🔧 Commands
 
-In `main_orchestrated.py`:
+### Streamlit UI
+- Click buttons and type queries
+- Toggle settings in sidebar
+- Download reports via button
 
+### CLI (`main_orchestrated.py`)
 - Normal query - Ask research questions
 - `trace` - Show ReAct reasoning from last query
 - `ingest` - Process documents in `/data`
@@ -213,6 +268,7 @@ In `main_orchestrated.py`:
 - [x] Business Analyst (RAG + Reranking)
 - [x] Multi-agent orchestration
 - [x] **ReAct framework** 🎉
+- [x] **Streamlit UI** 🎉
 - [ ] Quantitative Analyst
 - [ ] Market Analyst (real-time)
 - [ ] Industry Analyst (web search)
@@ -221,6 +277,7 @@ In `main_orchestrated.py`:
 - [ ] Parallel execution
 - [ ] Multi-turn memory
 - [ ] Cost tracking
+- [ ] Chart visualization in UI
 
 ## 💡 Why ReAct?
 
@@ -250,10 +307,11 @@ while not done:
 3. **Agentic RAG** - Advanced retrieval
 4. **LangGraph** - Stateful workflows
 5. **Hybrid LLMs** - Local + Cloud
+6. **Streamlit** - Interactive UI
 
 ## 📝 Design Philosophy
 
-從單一 Agent 嘅「直線流程」升級到 **ReAct Loop** 真正識思考，再加 Multi-Agent Orchestration 模擬完整 Research Team：ReAct Orchestrator 做 Project Manager，各 Specialist 做專家，Synthesizer 寫 Final Report。
+從單一 Agent 嘅「直線流程」升級到 **ReAct Loop** 真正識思考，再加 Multi-Agent Orchestration 模擬完整 Research Team：ReAct Orchestrator 做 Project Manager，各 Specialist 做專家，Synthesizer 寫 Final Report。而家仲有 Streamlit UI 畀人方便用！
 
 ## 📄 License
 
