@@ -116,13 +116,15 @@ Format:
 - Highlight what's NEW vs what's in documents
         """
         
-        user_prompt = f"""
-### WEB SEARCH CONTEXT (with SOURCE markers):
+        # Build prior analysis section separately to avoid f-string backslash issue
+        prior_section = ""
+        if prior_analysis:
+            prior_section = f"### PRIOR DOCUMENT ANALYSIS:\n{prior_analysis}\n\n"
+        
+        user_prompt = f"""### WEB SEARCH CONTEXT (with SOURCE markers):
 {search_context}
 
-{f"### PRIOR DOCUMENT ANALYSIS:\n{prior_analysis}" if prior_analysis else ""}
-
-### USER QUESTION:
+{prior_section}### USER QUESTION:
 {query}
 
 ### YOUR SUPPLEMENTAL ANALYSIS:
