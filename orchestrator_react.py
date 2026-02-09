@@ -14,6 +14,7 @@ ReAct Loop:
 
 import os
 import json
+import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -432,8 +433,41 @@ Provide ONLY valid JSON."""
             result += "Note: This agent will be fully implemented in future versions.\n"
             return result
     
+    def _extract_document_sources(self, specialist_outputs: List[Dict]) -> Dict[int, str]:
+        """
+        Extract actual document sources from specialist outputs
+        Returns mapping of citation number to document source
+        """
+        document_sources = {}
+        citation_num = 1
+        
+        for output in specialist_outputs:
+            content = output['result']
+            
+            # Pattern to match: --- SOURCE: filename.pdf (Page X) ---
+            source_pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            sources = re.findall(source_pattern, content, re.IGNORECASE)
+            
+            for filename, page in sources:
+                filename = filename.strip()
+                page = page.strip()
+                source_key = f"{filename} - Page {page}"
+                
+                # Only add if not duplicate
+                if source_key not in document_sources.values():
+                    document_sources[citation_num] = source_key
+                    citation_num += 1
+            
+            # If no sources found but has content (placeholder agents), add agent as source
+            if not sources and "PLACEHOLDER" in content:
+                agent_name = output['agent'].replace('_', ' ').title()
+                document_sources[citation_num] = f"{agent_name} (Placeholder Analysis)"
+                citation_num += 1
+        
+        return document_sources
+    
     def _synthesize(self, user_query: str) -> str:
-        """Synthesize all observations into final report WITH REFERENCES SECTION"""
+        """Synthesize all observations into final report WITH DOCUMENT-BASED REFERENCES"""
         num_obs = len(self.trace.observations)
         specialist_calls = self.trace.get_specialist_calls()
         
@@ -471,20 +505,52 @@ This report was generated without calling specialist agents. For more detailed a
 - Allow more iterations for comprehensive multi-agent orchestration
 """
         
-        # Create synthesis prompt with specialist outputs
+        # Extract actual document sources
+        document_sources = self._extract_document_sources(specialist_outputs)
+        
+        print(f"   📚 Found {len(document_sources)} unique document sources")
+        
+        # Create outputs text with SOURCE markers numbered
+        outputs_with_citations = []
+        for i, output in enumerate(specialist_outputs):
+            content = output['result']
+            
+            # Replace SOURCE markers with citation numbers
+            source_pattern = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
+            
+            def replace_source(match):
+                filename = match.group(1).strip()
+                page = match.group(2).strip()
+                source_key = f"{filename} - Page {page}"
+                
+                # Find citation number for this source
+                for num, doc in document_sources.items():
+                    if doc == source_key:
+                        return f"[CITE:{num}]"
+                return match.group(0)
+            
+            content_with_cites = re.sub(source_pattern, replace_source, content, flags=re.IGNORECASE)
+            
+            outputs_with_citations.append({
+                'agent': output['agent'],
+                'task': output['task'],
+                'content': content_with_cites
+            })
+        
+        # Format outputs for synthesis
         outputs_text = "\n\n".join([
             f"{'='*60}\n"
-            f"SOURCE [{i+1}]: {output['agent'].upper().replace('_', ' ')}\n"
+            f"SPECIALIST: {output['agent'].upper().replace('_', ' ')}\n"
             f"{'='*60}\n"
             f"Task: {output['task']}\n\n"
-            f"Analysis:\n{output['result']}\n"
-            for i, output in enumerate(specialist_outputs)
+            f"Analysis:\n{output['content']}\n"
+            for output in outputs_with_citations
         ])
         
-        # Create reference mapping
+        # Create document reference list
         references_list = "\n".join([
-            f"[{i+1}] {output['agent'].replace('_', ' ').title()}: {output['task'][:100]}..."
-            for i, output in enumerate(specialist_outputs)
+            f"[{num}] {doc}"
+            for num, doc in sorted(document_sources.items())
         ])
         
         prompt = f"""You are a Senior Equity Research Analyst synthesizing a multi-agent research report.
@@ -492,78 +558,92 @@ This report was generated without calling specialist agents. For more detailed a
 ORIGINAL QUERY:
 {user_query}
 
-SPECIALIST AGENT OUTPUTS ({len(specialist_outputs)} specialists):
+SPECIALIST AGENT OUTPUTS:
 
 {outputs_text}
 
 ====================================
-📚 SOURCE REFERENCE MAPPING
+📚 DOCUMENT SOURCE REFERENCE MAPPING
 ====================================
+
+When you see [CITE:1], [CITE:2], etc. in the specialist outputs above, these refer to:
+
 {references_list}
+
+====================================
 
 YOUR SYNTHESIS TASK:
 
-1. **Integrate all specialist insights** into a coherent narrative
-2. **Cite EVERY fact using [1], [2], [3]** corresponding to the SOURCE numbers above
-3. **Include a complete REFERENCES section** at the end of your report
-4. **Cross-validate findings** across different specialists
-5. **Provide actionable conclusions**
+1. **Extract information from specialist outputs** and synthesize coherently
+2. **When you cite facts, use [1], [2], [3]** corresponding to the document sources above
+3. **CRITICAL**: Cite DOCUMENT SOURCES, not specialist agents
+   - CORRECT: "According to Apple's 10-K filing [1], revenue was..." (where [1] = Apple_10K_2023.pdf)
+   - WRONG: "According to Business Analyst [1], revenue was..."
+4. **Include complete REFERENCES section** listing all cited documents
+5. **Cross-validate findings** and provide actionable insights
 
 REQUIRED REPORT STRUCTURE:
 
 ## Executive Summary
-[3-4 sentences with citations like: "Apple's revenue reached $463B [1], driven by...📞]
+[3-4 sentences with document citations: "Apple's 10-K filing reveals revenue of $463B [1]..."]
 
 ## Detailed Analysis
-[Organized by key themes, every statement cited]
 
 ### [Theme 1]
-[Facts with citations: "According to the 10-K analysis [1], competition intensified..."]
+[Synthesize with document citations: "Supply chain risks are disclosed in the 10-K [1] and corroborated by analyst reports [3]..."]
 
 ### [Theme 2]
-[Facts with citations]
+[Continue with document citations]
 
 ## Key Findings & Metrics
 - Revenue: $XXX [1]
-- Margin: XX% [2]
-[All metrics cited]
+- Debt/Equity: X.XX [2]
+[All metrics with document sources]
 
 ## Risk Factors
-[Risks cited to specialist sources]
+[Risks with document citations]
 
 ## Conclusion
-[Final assessment with citations]
+[Final assessment with document citations]
 
 ---
 
 ## 📚 References
 
-[1] Business Analyst: Analysis of Apple's 10-K filing...
-[2] Quantitative Analyst: Financial metrics and ratios...
-[3] Industry Analyst: Sector competitive landscape...
-[Continue for all {len(specialist_outputs)} specialists]
+{references_list}
 
 ---
 
-⚠️ CRITICAL REQUIREMENTS:
-- **EVERY claim needs [1], [2], [3] etc. citation**
-- **YOU MUST INCLUDE COMPLETE REFERENCES SECTION** at end
-- Use multiple citations for facts from multiple sources: [1][2]
-- The References section MUST list what each number refers to
-- Be specific: "[1] Business Analyst: 10-K analysis of competitive risks"
+⚠️ CRITICAL CITATION RULES:
 
-Provide the complete report now with full References section."""
+1. **Cite DOCUMENTS, not agents**
+   - [1] should reference "Apple_10K_2023.pdf" NOT "Business Analyst"
+   - [2] should reference "TSLA_Analysis.docx" NOT "Industry Analyst"
+
+2. **Every fact MUST have a citation**
+   - Numbers, metrics, quotes all need [1], [2], etc.
+   - Multiple sources: [1][2][3]
+
+3. **References section MUST list actual files**
+   - Show document names and pages
+   - Format: [1] Apple_10K_2023.pdf - Page 23
+
+4. **Be specific about what's in each document**
+   - Good: [1] Apple_10K_2023.pdf - Page 23 (Supply chain risks)
+   - Bad: [1] 10-K filing analysis
+
+Provide the complete report now with document-based References section."""
         
         try:
             messages = [{"role": "user", "content": prompt}]
             # Use sonar-pro for synthesis
-            print("   🔄 Generating synthesis with References section...")
+            print("   🔄 Generating synthesis with document-based citations...")
             final_report = self.client.chat(messages, model="sonar-pro", temperature=0.3)
             print("   ✅ Synthesis complete")
             return final_report
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
-            # Fallback: return raw outputs with references
+            # Fallback: return raw outputs with document references
             fallback = f"""## Research Report
 
 **Note**: Synthesis failed, presenting raw specialist outputs.
@@ -572,7 +652,7 @@ Provide the complete report now with full References section."""
 
 ---
 
-## 📚 References
+## 📚 References (Document Sources)
 
 {references_list}
 
