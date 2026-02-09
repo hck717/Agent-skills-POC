@@ -103,6 +103,8 @@ st.markdown("""
 # Initialize session state
 if 'orchestrator' not in st.session_state:
     st.session_state.orchestrator = None
+if 'business_analyst' not in st.session_state:
+    st.session_state.business_analyst = None
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'initialized' not in st.session_state:
@@ -157,6 +159,7 @@ def initialize_orchestrator(perplexity_api_key: str, max_iterations: int = 5):
                 db_path="./storage/chroma_db"
             )
             orchestrator.register_specialist("business_analyst", business_analyst)
+            st.session_state.business_analyst = business_analyst
             st.session_state.business_analyst_status = "✅ Active"
         except Exception as e:
             st.session_state.business_analyst_status = f"⚠️ Error: {str(e)[:50]}"
@@ -239,6 +242,78 @@ with st.sidebar:
             else:
                 st.info(f"⏳ {agent_name}")
         
+        # Business Analyst Data Management
+        if st.session_state.business_analyst:
+            st.markdown("---")
+            st.markdown("### 📚 Business Analyst Data")
+            
+            with st.expander("🔧 Data Management", expanded=False):
+                st.markdown("""
+                **Supported Formats:**
+                - 📄 PDF (.pdf)
+                - 📝 Word (.docx)
+                - 📃 Text (.txt)
+                - 📋 Markdown (.md)
+                """)
+                
+                # Get database stats
+                if st.button("📊 Check Database Stats", use_container_width=True):
+                    with st.spinner("Checking database..."):
+                        stats = st.session_state.business_analyst.get_database_stats()
+                        
+                        if 'error' in stats:
+                            st.error(f"❌ {stats['error']}")
+                        else:
+                            st.success("📈 Database Statistics:")
+                            for ticker, count in stats.items():
+                                if ticker != 'TOTAL':
+                                    st.metric(f"{ticker}", f"{count:,} chunks")
+                            st.markdown("---")
+                            st.metric("**Total Chunks**", f"{stats.get('TOTAL', 0):,}")
+                
+                st.markdown("---")
+                
+                # Reingest button
+                st.markdown("**🔄 Re-ingest Documents**")
+                st.caption("Scan ./data folder and embed all documents")
+                if st.button("🔄 Reingest All Data", use_container_width=True, type="primary"):
+                    with st.spinner("Re-ingesting documents from ./data folder..."):
+                        try:
+                            st.session_state.business_analyst.ingest_data()
+                            st.success("✅ Documents re-ingested successfully!")
+                            st.info("💡 Click 'Check Database Stats' to see updated counts")
+                        except Exception as e:
+                            st.error(f"❌ Error during ingestion: {str(e)}")
+                            st.code(str(e), language="python")
+                
+                st.markdown("---")
+                
+                # Reset button with warning
+                st.markdown("**⚠️ Reset Vector Database**")
+                st.caption("⚠️ This will DELETE all embedded documents!")
+                
+                reset_confirmed = st.checkbox(
+                    "I understand this will delete all data",
+                    key="reset_confirm"
+                )
+                
+                if st.button(
+                    "🗑️ Reset Database", 
+                    use_container_width=True, 
+                    disabled=not reset_confirmed,
+                    type="secondary"
+                ):
+                    with st.spinner("Resetting vector database..."):
+                        try:
+                            success, message = st.session_state.business_analyst.reset_vector_db()
+                            if success:
+                                st.success(f"✅ {message}")
+                                st.warning("⚠️ Database cleared. Run 'Reingest All Data' to reload documents.")
+                            else:
+                                st.error(f"❌ {message}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+        
         # Settings
         st.markdown("---")
         st.markdown("### Settings")
@@ -263,6 +338,7 @@ with st.sidebar:
         st.markdown("---")
         if st.button("🔄 Reset System", use_container_width=True):
             st.session_state.orchestrator = None
+            st.session_state.business_analyst = None
             st.session_state.history = []
             st.session_state.initialized = False
             st.rerun()
