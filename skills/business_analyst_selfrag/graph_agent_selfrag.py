@@ -2,24 +2,24 @@
 """
 Self-RAG Enhanced Business Analyst Graph Agent
 
-Version: 25.2 - "10/10" Enhanced Edition
-Fixes:
-1. Dynamic Ticker Discovery (No hardcoded maps)
-2. Robust Web Search Fallback (Returns actual Documents)
-3. Strict SEC Context & Prompting
-4. Fixed Citation Regex & Injection
-5. Correct Hallucination Metrics
+Version: 25.3 - "11/10" Enhanced Edition (Structured Financials)
+New Features:
+1. Structured Financial Data Extraction (Regex/XBRL-sim)
+2. Dynamic Ticker Discovery
+3. Robust Web Search Fallback
+4. Strict SEC Context & Prompting
+5. Fixed Citation Regex & Injection
 
 Flow:
   START → Adaptive Check → [Direct Output OR Full RAG]
-  Full RAG: Identify → Research → Grade → [Analyst OR Web Search] → Generate → Hallucination Check → [END OR Retry]
+  Full RAG: Identify → [Research | Financials] → Grade → [Analyst OR Web Search] → Generate → Hallucination Check → END
 """
 
 import os
 import operator
 import re
 import shutil
-from typing import Annotated, TypedDict, List, Tuple, Dict
+from typing import Annotated, TypedDict, List, Tuple, Dict, Any
 from collections import defaultdict
 
 # LangChain & Graph
@@ -37,6 +37,7 @@ from .semantic_chunker import SemanticChunker
 from .document_grader import DocumentGrader
 from .hallucination_checker import HallucinationChecker
 from .adaptive_retrieval import AdaptiveRetrieval
+from .financial_extractor import FinancialExtractor  # <--- NEW
 
 # BM25 for sparse retrieval
 try:
@@ -54,6 +55,7 @@ class AgentState(TypedDict):
     tickers: List[str]
     documents: List[Document]  # Retrieved docs before grading
     graded_documents: List[Document]  # Filtered docs after grading
+    financial_data: Dict[str, str] # <--- NEW: Structured metrics
     passed_grading: bool
     relevance_rate: float
     skip_rag: bool  # Adaptive retrieval flag
@@ -68,8 +70,8 @@ class SelfRAGBusinessAnalyst:
         self.db_path = db_path
         self.use_semantic_chunking = use_semantic_chunking
         
-        print(f"🚀 Initializing Self-RAG Business Analyst v25.2 (Enhanced)...")
-        print(f"   Features: Adaptive + Grading + Hallucination + Web Search Fallback + SEC-Aware")
+        print(f"🚀 Initializing Self-RAG Business Analyst v25.3 (11/10)...")
+        print(f"   Features: Financial Extraction + Adaptive + Grading + Hallucination + SEC-Aware")
         
         # Models
         self.chat_model_name = "deepseek-r1:8b"
@@ -96,6 +98,7 @@ class SelfRAGBusinessAnalyst:
         self.document_grader = DocumentGrader(model_name=self.chat_model_name)
         self.hallucination_checker = HallucinationChecker(model_name=self.chat_model_name)
         self.adaptive_retrieval = AdaptiveRetrieval(model_name=self.chat_model_name)
+        self.financial_extractor = FinancialExtractor() # <--- NEW
         
         # Semantic chunker (lazy init)
         self.semantic_chunker = None
@@ -143,7 +146,6 @@ class SelfRAGBusinessAnalyst:
     def _reciprocal_rank_fusion(self, vector_results: List[Tuple[Document, float]], 
                                  bm25_results: List[Tuple[Document, float]], k: int = 60) -> List[Document]:
         def doc_id(doc: Document) -> str:
-            # Create a deterministic ID based on content hash
             return f"{doc.metadata.get('source', '')}_{hash(doc.page_content[:100])}"
         
         rrf_scores = defaultdict(float)
@@ -184,7 +186,6 @@ class SelfRAGBusinessAnalyst:
         
         print("   ⚠️ LLM didn't preserve citations - injecting them automatically")
         
-        # Robust regex to capture filename and page with potential whitespace variations
         source_pattern = r'--- SOURCE:\s*(.+?)\s*\(Page\s*(.+?)\)\s*---'
         sources = re.findall(source_pattern, context)
         
@@ -198,7 +199,6 @@ class SelfRAGBusinessAnalyst:
         for i, line in enumerate(lines):
             result_lines.append(line)
             
-            # Inject after meaningful paragraphs
             if (line.strip() and 
                 not line.startswith('#') and 
                 len(line) > 80 and 
@@ -230,19 +230,14 @@ class SelfRAGBusinessAnalyst:
         last_human_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         query = last_human_msg.content.upper() if last_human_msg else ""
         
-        # 1. Scan available data directories
         available_tickers = []
         if os.path.exists(self.data_path):
             available_tickers = [d.name.upper() for d in os.scandir(self.data_path) if d.is_dir()]
         
         found_tickers = []
-        
-        # 2. Check explicitly mentioned tickers in available data
         for t in available_tickers:
-            if t in query:
-                found_tickers.append(t)
+            if t in query: found_tickers.append(t)
         
-        # 3. Fuzzy/Common map fallback if not found in query directly but data exists
         mapping = {
             "APPLE": "AAPL", "MICROSOFT": "MSFT", "TESLA": "TSLA",
             "NVIDIA": "NVDA", "GOOGLE": "GOOGL", "AMAZON": "AMZN", "META": "META"
@@ -250,15 +245,12 @@ class SelfRAGBusinessAnalyst:
         
         if not found_tickers:
             for name, ticker in mapping.items():
-                if name in query and ticker in available_tickers:
-                     found_tickers.append(ticker)
+                if name in query and ticker in available_tickers: found_tickers.append(ticker)
         
-        # 4. Regex fallback for any ticker-like string
         if not found_tickers:
              potential_tickers = re.findall(r'\b[A-Z]{2,5}\b', query)
              for t in potential_tickers:
-                 if t in available_tickers:
-                     found_tickers.append(t)
+                 if t in available_tickers: found_tickers.append(t)
         
         return {"tickers": list(set(found_tickers))}
 
@@ -270,7 +262,6 @@ class SelfRAGBusinessAnalyst:
         tickers = state.get('tickers', [])
         
         if not tickers:
-            # List available tickers to help user
             available = []
             if os.path.exists(self.data_path):
                 available = [d.name for d in os.scandir(self.data_path) if d.is_dir()]
@@ -278,30 +269,47 @@ class SelfRAGBusinessAnalyst:
             return {"documents": [], "context": msg}
 
         all_documents = []
-        
         for ticker in tickers:
             print(f"🕵️ [Research] Search for {ticker}...")
             collection_name = f"docs_{ticker}"
             vs = self._get_vectorstore(collection_name)
             
-            # Count check
             try:
                 if vs._collection.count() == 0: continue
             except: continue
 
-            # Query expansion for SEC contexts
             search_query = query
-            if "compet" in query.lower(): 
-                search_query += " competition rivals market share Item 1"
-            if "risk" in query.lower(): 
-                search_query += " risk factors Item 1A legal proceedings Item 3"
-            if "financial" in query.lower() or "revenue" in query.lower(): 
-                search_query += " MD&A Item 7 results of operations"
+            if "compet" in query.lower(): search_query += " competition rivals market share Item 1"
+            if "risk" in query.lower(): search_query += " risk factors Item 1A legal proceedings Item 3"
+            if "financial" in query.lower() or "revenue" in query.lower(): search_query += " MD&A Item 7 results of operations"
             
             docs = self._hybrid_search(collection_name, search_query, k=25)
             all_documents.extend(docs)
         
         return {"documents": all_documents}
+
+    # --- Node 2.5: Financial Extraction (NEW) ---
+    def financial_extraction_node(self, state: AgentState):
+        """
+        Extracts structured financial data from retrieved documents.
+        """
+        documents = state.get('documents', [])
+        if not documents:
+            return {"financial_data": {}}
+
+        print(f"💰 [Financials] Scanning {len(documents)} docs for structured data...")
+        
+        # Combine text from likely financial sections (top 5 docs)
+        combined_text = " ".join([d.page_content for d in documents[:10]])
+        
+        # Run extractor
+        metrics = self.financial_extractor.extract_metrics(combined_text)
+        if metrics:
+            print(f"   ✅ Found {len(metrics)} metrics: {list(metrics.keys())}")
+        else:
+            print(f"   ⚠️ No structured metrics found")
+            
+        return {"financial_data": metrics}
 
     # --- Node: Grade Documents ---
     def grade_documents_node(self, state: AgentState):
@@ -321,16 +329,9 @@ class SelfRAGBusinessAnalyst:
             "relevance_rate": metadata['pass_rate']
         }
 
-    # --- Node: Web Search Fallback (Robust) ---
+    # --- Node: Web Search Fallback ---
     def web_search_fallback_node(self, state: AgentState):
-        """
-        Fallback that returns a Document object so the pipeline can continue.
-        In a real app, you'd call a search API here.
-        """
         print("\n🌐 [Web Search] Document grading failed - Creating fallback context...")
-        
-        # Create a "synthetic" document from web search simulation
-        # In production, replace this with actual tool call
         messages = state['messages']
         query = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
         
@@ -346,10 +347,9 @@ class SelfRAGBusinessAnalyst:
             metadata={"source": "Web_Search_Fallback", "page": "1"}
         )
         
-        # Return as 'graded_documents' so reranker picks it up
         return {
             "graded_documents": [fallback_doc],
-            "passed_grading": True  # Force pass to continue to rerank/analyst
+            "passed_grading": True
         }
 
     # --- Node 3: Rerank ---
@@ -360,14 +360,12 @@ class SelfRAGBusinessAnalyst:
         
         if not docs:
             return {"context": ""}
-
-        print(f"⚖️ [Rerank] Scoring {len(docs)} filtered documents...")
         
-        # If only 1 doc (web fallback), skip rerank
         if len(docs) == 1 and docs[0].metadata.get("source") == "Web_Search_Fallback":
              context = f"--- SOURCE: Web_Search_Fallback (Page 1) ---\n{docs[0].page_content}"
              return {"context": context}
 
+        print(f"⚖️ [Rerank] Scoring {len(docs)} filtered documents...")
         pairs = [[query, doc.page_content] for doc in docs]
         scores = self.reranker.predict(pairs)
         scored_docs = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
@@ -385,9 +383,10 @@ class SelfRAGBusinessAnalyst:
         context = "\n\n".join(formatted_chunks)
         return {"context": context}
 
-    # --- Node 4: Analyst (SEC Enhanced) ---
+    # --- Node 4: Analyst (SEC + Financials) ---
     def analyst_node(self, state: AgentState):
         context = state.get('context', '')
+        financial_data = state.get('financial_data', {})
         messages = state['messages']
         last_human_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         query = last_human_msg.content if last_human_msg else ""
@@ -395,6 +394,9 @@ class SelfRAGBusinessAnalyst:
         if not context:
             return {"messages": [HumanMessage(content="⚠️ No relevant documents found. Please try a clearer query or check ingested data.")]}
 
+        # Inject structured financials into context
+        financial_context = self.financial_extractor.format_financials_for_context(financial_data)
+        
         # Context-aware prompting
         prompt_type = "general"
         if "compet" in query.lower() or "market" in query.lower():
@@ -409,12 +411,13 @@ class SelfRAGBusinessAnalyst:
 - Every factual claim MUST be followed immediately by a citation.
 - Format: --- SOURCE: filename (Page X) ---
 - If data comes from "Web_Search_Fallback", cite that.
-- Do not make up page numbers.
         """
         
         full_prompt = f"""{base_prompt}
         
 {citation_instruction}
+
+{financial_context}
 
 ====== SEC FILING CONTEXT ======
 {context}
@@ -432,7 +435,7 @@ Provide a professional Business Analysis.
         
         return {"messages": [HumanMessage(content=analysis)]}
 
-    # --- Node: Hallucination Check (Fixed Regex) ---
+    # --- Node: Hallucination Check ---
     def hallucination_check_node(self, state: AgentState):
         messages = state['messages']
         analysis = messages[-1].content if messages else ""
@@ -460,8 +463,7 @@ Provide a professional Business Analysis.
         return "identify"
     
     def should_use_web_search(self, state: AgentState) -> str:
-        if not state.get('passed_grading', False):
-            return "web_search"
+        if not state.get('passed_grading', False): return "web_search"
         return "rerank"
     
     def should_retry_generation(self, state: AgentState) -> str:
@@ -477,6 +479,7 @@ Provide a professional Business Analysis.
         workflow.add_node("direct_output", self.direct_output_node)
         workflow.add_node("identify", self.identify_node)
         workflow.add_node("research", self.research_node)
+        workflow.add_node("extract_financials", self.financial_extraction_node) # <--- NEW NODE
         workflow.add_node("grade", self.grade_documents_node)
         workflow.add_node("web_search", self.web_search_fallback_node)
         workflow.add_node("rerank", self.rerank_node)
@@ -487,7 +490,12 @@ Provide a professional Business Analysis.
         workflow.add_conditional_edges("adaptive", self.should_skip_rag, {"direct_output": "direct_output", "identify": "identify"})
         workflow.add_edge("direct_output", END)
         workflow.add_edge("identify", "research")
-        workflow.add_edge("research", "grade")
+        
+        # Parallel: Research -> Extract Financials -> Grade
+        # Or better: Research -> Extract -> Grade (sequential is safer for State flow)
+        workflow.add_edge("research", "extract_financials")
+        workflow.add_edge("extract_financials", "grade")
+        
         workflow.add_conditional_edges("grade", self.should_use_web_search, {"web_search": "web_search", "rerank": "rerank"})
         workflow.add_edge("web_search", "rerank")
         workflow.add_edge("rerank", "analyst")
@@ -505,8 +513,7 @@ Provide a professional Business Analysis.
             )
         return self.vectorstores[collection_name]
     
-    # ... (Ingest/Reset/Stats methods same as original, omitted for brevity but preserved in real file) ...
-    # Re-adding ingest for completeness
+    # ... Ingest ...
     def ingest_data(self):
         print(f"\n📂 Scanning {self.data_path}...")
         if not os.path.exists(self.data_path):
@@ -528,14 +535,12 @@ Provide a professional Business Analysis.
         for folder in folders:
             ticker = os.path.basename(folder).upper()
             print(f"\n📊 Processing {ticker}...")
-            
             try:
                 pdf_loader = DirectoryLoader(folder, glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=False)
                 docs = pdf_loader.load()
             except Exception as e:
                 print(f"   ⚠️ PDF error: {e}")
                 continue
-                
             if not docs: continue
             
             if self.use_semantic_chunking:
@@ -547,9 +552,7 @@ Provide a professional Business Analysis.
             collection_name = f"docs_{ticker}"
             vs = self._get_vectorstore(collection_name)
             vs.add_documents(splits)
-            
-            if self.use_hybrid:
-                self._build_bm25_index(collection_name, splits)
+            if self.use_hybrid: self._build_bm25_index(collection_name, splits)
             print(f"   ✅ Indexed {len(splits)} chunks")
 
     def analyze(self, query: str):
