@@ -1,3 +1,7 @@
-from .graph_agent_graphrag import GraphRAGBusinessAnalyst
+from .graph_agent_graphrag import UltimateGraphRAGBusinessAnalyst
 
-__all__ = ['GraphRAGBusinessAnalyst']
+# Backward compatibility
+GraphRAGBusinessAnalyst = UltimateGraphRAGBusinessAnalyst
+
+__all__ = ['UltimateGraphRAGBusinessAnalyst', 'GraphRAGBusinessAnalyst']
+__version__ = '27.0'
