@@ -2,7 +2,7 @@
 """
 Self-RAG Enhanced Business Analyst Graph Agent
 
-Version: 25.0 - Self-RAG Architecture
+Version: 25.1 - Self-RAG Architecture + Citation Fix
 
 New Features:
 1. Semantic Chunking - Better document splitting
@@ -10,6 +10,7 @@ New Features:
 3. Document Grading - Filter irrelevant documents
 4. Hallucination Checking - Verify answer grounding
 5. Web Search Fallback - If document grading fails
+6. 🔥 NEW: Citation Injection - Preserve SOURCE markers
 
 Flow:
   START → Adaptive Check → [Direct Output OR Full RAG]
@@ -69,8 +70,8 @@ class SelfRAGBusinessAnalyst:
         self.db_path = db_path
         self.use_semantic_chunking = use_semantic_chunking
         
-        print(f"🚀 Initializing Self-RAG Business Analyst v25.0...")
-        print(f"   Features: Adaptive Retrieval + Document Grading + Hallucination Check")
+        print(f"🚀 Initializing Self-RAG Business Analyst v25.1...")
+        print(f"   Features: Adaptive Retrieval + Document Grading + Hallucination Check + Citation Fix")
         print(f"   Semantic Chunking: {'ENABLED' if use_semantic_chunking else 'DISABLED'}")
         
         # Models
@@ -172,6 +173,55 @@ class SelfRAGBusinessAnalyst:
             return fused_docs[:k]
         else:
             return [doc for doc, _ in vector_docs]
+
+    # 🔥 NEW: Citation Injection (from Standard RAG)
+    def _inject_citations_if_missing(self, analysis: str, context: str) -> str:
+        """
+        🔥 POST-PROCESSING FIX: Inject citations if LLM didn't preserve them
+        """
+        # Check if analysis already has citations
+        if '--- SOURCE:' in analysis:
+            citation_count = analysis.count('--- SOURCE:')
+            print(f"   ✅ LLM preserved {citation_count} citations")
+            return analysis
+        
+        print("   ⚠️ LLM didn't preserve citations - injecting them automatically")
+        
+        # Extract all sources from context
+        source_pattern = r'--- SOURCE: ([^\(]+)\(Page ([^\)]+)\) ---'
+        sources = re.findall(source_pattern, context)
+        
+        if not sources:
+            print("   ❌ No sources found in context to inject")
+            return analysis
+        
+        print(f"   📚 Found {len(sources)} sources to distribute")
+        
+        # Split analysis into sections/paragraphs
+        lines = analysis.split('\n')
+        result_lines = []
+        source_idx = 0
+        
+        for i, line in enumerate(lines):
+            result_lines.append(line)
+            
+            # Add citation after substantial paragraphs (not headers, not empty lines)
+            if (line.strip() and 
+                not line.startswith('#') and 
+                len(line) > 100 and 
+                source_idx < len(sources) and
+                i < len(lines) - 1):  # Don't add to last line
+                
+                filename, page = sources[source_idx]
+                result_lines.append(f"--- SOURCE: {filename}(Page {page}) ---")
+                print(f"   [Citation {source_idx + 1}] Added: {filename} Page {page}")
+                source_idx += 1
+        
+        injected_analysis = '\n'.join(result_lines)
+        final_count = injected_analysis.count('--- SOURCE:')
+        print(f"   ✅ Injected {final_count} citations into analysis")
+        
+        return injected_analysis
 
     # --- NEW: Adaptive Retrieval Node ---
     def adaptive_node(self, state: AgentState):
@@ -373,6 +423,9 @@ Provide your analysis with strict citation compliance.
         response = self.llm.invoke(new_messages)
         analysis = response.content
         
+        # 🔥 FIX: Inject citations if LLM failed to preserve them
+        analysis = self._inject_citations_if_missing(analysis, context)
+        
         return {"messages": [HumanMessage(content=analysis)]}
 
     # --- NEW: Hallucination Check Node ---
@@ -563,6 +616,44 @@ Provide your analysis with strict citation compliance.
             print(f"   ✅ Indexed {len(splits)} chunks")
         
         print(f"\n✅ Self-RAG ingestion complete!")
+
+    def reset_vector_db(self):
+        """⚠️ DANGER: Delete all vector data"""
+        print(f"\n🗑️ RESETTING VECTOR DATABASE...")
+        try:
+            self.vectorstores = {}
+            self.bm25_indexes = {}
+            self.bm25_documents = {}
+            
+            if os.path.exists(self.db_path):
+                shutil.rmtree(self.db_path)
+                print(f"   ✅ Deleted {self.db_path}")
+            
+            os.makedirs(self.db_path, exist_ok=True)
+            return True, "Vector database reset successfully"
+        except Exception as e:
+            return False, f"Failed to reset: {str(e)}"
+
+    def get_database_stats(self):
+        """Get database statistics"""
+        stats = {}
+        total_chunks = 0
+        
+        if not os.path.exists(self.data_path):
+            return {"error": "Data path doesn't exist"}
+        
+        for folder in [f.path for f in os.scandir(self.data_path) if f.is_dir()]:
+            ticker = os.path.basename(folder).upper()
+            try:
+                vs = self._get_vectorstore(f"docs_{ticker}")
+                count = vs._collection.count()
+                stats[ticker] = count
+                total_chunks += count
+            except:
+                stats[ticker] = 0
+        
+        stats['TOTAL'] = total_chunks
+        return stats
 
     def analyze(self, query: str):
         print(f"🤖 User Query: '{query}'")
