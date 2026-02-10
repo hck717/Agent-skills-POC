@@ -15,7 +15,8 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from orchestrator_react import ReActOrchestrator
-from skills.business_analyst.graph_agent import BusinessAnalystGraphAgent
+# 🔥 UPDATED: Use business_analyst_standard instead of business_analyst
+from skills.business_analyst_standard.graph_agent import BusinessAnalystGraphAgent
 from skills.web_search_agent.agent import WebSearchAgent
 
 
@@ -118,7 +119,7 @@ def initialize_orchestrator(max_iterations: int = 3, ollama_url: str = "http://l
             )
             orchestrator.register_specialist("business_analyst", business_analyst)
             st.session_state.business_analyst = business_analyst
-            st.session_state.business_analyst_status = "✅ Active"
+            st.session_state.business_analyst_status = "✅ Active (Standard RAG)"
         except Exception as e:
             st.session_state.business_analyst_status = f"⚠️ Error: {str(e)[:50]}"
         
@@ -225,7 +226,7 @@ with st.sidebar:
         # Show agent execution order
         st.caption("""
         **Execution Order:**
-        1. Business Analyst (documents)
+        1. Business Analyst (documents - Standard RAG)
         2. Web Search Agent (supplements)
         3. Synthesis (combines all)
         """)
@@ -343,6 +344,8 @@ with st.sidebar:
     - 📄 Local Documents (10-K, PDFs)
     - 🌐 Web Search (Tavily + local LLM)
     - 🔒 All synthesis done locally
+    
+    **Business Analyst:** Standard RAG v24.0
     """)
 
 
