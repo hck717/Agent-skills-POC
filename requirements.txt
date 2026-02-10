@@ -23,6 +23,13 @@ ollama>=0.1.6
 # Web Search (Tavily)
 tavily-python>=0.3.0
 
+# 🔥 NEW: Hybrid Search - BM25 sparse retrieval
+rank-bm25>=0.2.2
+
+# 🔥 NEW: RAGAS Evaluation Framework
+ragas>=0.1.0
+datasets>=2.14.0
+
 # Utilities
 requests>=2.31.0
 python-dotenv>=1.0.0
