@@ -23,6 +23,9 @@ ollama>=0.1.6
 # Web Search (Tavily)
 tavily-python>=0.3.0
 
+# Hybrid Search - BM25 Sparse Retrieval
+rank-bm25>=0.2.2
+
 # Utilities
 requests>=2.31.0
 python-dotenv>=1.0.0
