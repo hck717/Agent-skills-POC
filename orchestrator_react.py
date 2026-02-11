@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 2.4 - Graph Citation Support + Timeout Fix
+Version: 2.5 - Stricter Sentence-Level Citations
 """
 
 import os
@@ -635,30 +635,31 @@ EXAMPLE FORMAT (FOLLOW THIS):
 ==========================================================================
 
 1. **EVERY FACTUAL CLAIM MUST BE CITED**
-   ✅ "Revenue reached $394B per FY2025 10-K [1]"
-   ❌ "Revenue reached $394B" (NO CITATION = UNACCEPTABLE)
+   - **RULE**: Any sentence containing a number, date, or specific fact MUST end with a citation.
+   - ✅ "Revenue reached $394B per FY2025 10-K [1]."
+   - ❌ "Revenue reached $394B." (NO CITATION = UNACCEPTABLE)
 
-2. **EVERY NUMBER MUST BE CITED**
-   ✅ "Market cap of $2.4T [9]"
-   ❌ "Market cap of $2.4T" (NO CITATION = UNACCEPTABLE)
+2. **SENTENCE-LEVEL CITATION**
+   - Do NOT group citations at the end of a paragraph. Cite immediately after the fact.
+   - ✅ "Services revenue grew 15% [1], while hardware declined 2% [2]."
+   - ❌ "Services revenue grew 15% while hardware declined 2% [1][2]."
 
-3. **TEMPORAL MARKERS (MANDATORY)**
+3. **EVERY NUMBER MUST BE CITED**
+   - ✅ "Market cap of $2.4T [9]."
+   - ❌ "Market cap of $2.4T." (NO CITATION = UNACCEPTABLE)
+
+4. **TEMPORAL MARKERS (MANDATORY)**
    - 10-K: "Per FY2025 10-K [1]" or "As disclosed in annual filing [2]"
    - Web: "As of Q1 2026 [8]" or "Recent reports indicate [9]" or "Per January 2026 analyst note [10]"
 
-4. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
+5. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
    - Each bullet point needs 2-3 citations minimum
    - Mix historical [1-7] and current [8+] sources
 
-5. **FORMAT**
+6. **FORMAT**
    - Replace [SOURCE-X] with [X]
    - Space before citation: "text [1]" not "text[1]"
    - Multiple citations: "text [1][2][3]" not "text [1,2,3]"
-
-6. **CITATION DENSITY TARGET**
-   - Minimum 3 citations per section
-   - Every paragraph with data = citation
-   - Valuation Context section = 100% citation coverage
 
 7. **PROFESSIONAL TONE**
    - Exact figures: "15.23%" not "around 15%" or "approximately 15%"
@@ -666,17 +667,12 @@ EXAMPLE FORMAT (FOLLOW THIS):
    - Objectivity: "Data indicates" not "we believe" or "I think"
    - Temporal precision: "Q1 2026" not "recently" or "soon"
 
-8. **EXAMPLES OF PERFECT CITATION**
-   ✅ "iPhone revenue of $201.2B represented 52.1% of total revenue per FY2025 10-K [1], with unit sales of 234M devices [2]. Q1 2026 preliminary data suggests 8.2% YoY growth driven by China market recovery [8], with Goldman Sachs raising estimates to 245M units for FY2026 [9]."
-   
-   ✅ "The company faces supply chain concentration risk with 67% of manufacturing in China [3]. Recent geopolitical tensions have prompted management to announce diversification plans, targeting 30% of production in India by 2027 [10]."
-
 ==========================================================================
 ⚠️ QUALITY CONTROL - YOUR REPORT WILL BE REJECTED IF:
 ==========================================================================
 - Any metric lacks citation
 - Investment Thesis has < 8 citations
-- Any paragraph with data lacks citation
+- Any sentence with data lacks citation
 - Generic statements without specific data
 - Temporal markers missing
 - Web sources not distinguished from 10-K sources
@@ -745,108 +741,3 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
             print(f"   ❌ Synthesis error: {str(e)}")
             # Fallback
             return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
-    
-    def research(self, user_query: str) -> str:
-        """Main ReAct loop with rule-based reasoning"""
-        print("\n" + "="*70)
-        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.3")
-        print("   10/10 Quality + Performance (Hybrid: DeepSeek + Qwen)")
-        print("   Enhanced with CRAG Deep Reader")
-        print("="*70)
-        print(f"\n📥 Query: {user_query}")
-        print(f"🔄 Max Iterations: {self.max_iterations}")
-        print(f"📊 Registered Agents: {', '.join(self.specialist_agents.keys()) if self.specialist_agents else 'None'}")
-        
-        self.trace = ReActTrace()
-        
-        for iteration in range(1, self.max_iterations + 1):
-            print("\n" + "-"*70)
-            print(f"ITERATION {iteration}/{self.max_iterations}")
-            print("-"*70)
-            
-            action = self._reason_rule_based(user_query, iteration)
-            self.trace.add_action(action)
-            
-            observation = self._execute_action(action)
-            self.trace.add_observation(observation)
-            
-            obs_preview = observation.result[:150] + "..." if len(observation.result) > 150 else observation.result
-            print(f"\n👁️ [OBSERVATION] {obs_preview}")
-            
-            if action.action_type == ActionType.FINISH:
-                print(f"\n🎯 Loop ending at iteration {iteration}")
-                break
-        
-        print("\n" + "="*70)
-        print("📝 FINAL SYNTHESIS")
-        print("="*70)
-        
-        final_report = self._synthesize(user_query)
-        
-        print("\n" + "="*70)
-        print("📈 ORCHESTRATION SUMMARY")
-        print("="*70)
-        print(f"Iterations: {len(self.trace.thoughts)}")
-        print(f"Specialists: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
-        print("="*70)
-        
-        return final_report
-    
-    def get_trace_summary(self) -> str:
-        return self.trace.get_history_summary()
-
-
-def main():
-    try:
-        orchestrator = ReActOrchestrator(max_iterations=3)
-        
-        if not orchestrator.test_connection():
-            print("\n❌ Failed to connect to Ollama")
-            print("\n💡 Make sure Ollama is running: ollama serve")
-            print("💡 Make sure models are installed:")
-            print(f"   ollama pull {ReActOrchestrator.ANALYSIS_MODEL}")
-            print(f"   ollama pull {ReActOrchestrator.SYNTHESIS_MODEL}")
-            return
-    except ValueError as e:
-        print(f"❌ {str(e)}")
-        return
-    
-    print("\n🚀 Professional Equity Research Orchestrator v2.3 Ready")
-    print("   10/10 Quality Standard (Hybrid: DeepSeek-R1 8B + Qwen 2.5 7B)")
-    print("\n🎯 Model Strategy:")
-    print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
-    print(f"   - Synthesis: {ReActOrchestrator.SYNTHESIS_MODEL} (final report combining)")
-    print("\n💡 Performance Optimizations:")
-    print("   - Business Analyst: 2000 token limit")
-    print("   - Web Search: 1200 token limit")
-    print("   - Synthesis timeout: 240s (4 minutes)")
-    print("\nAvailable agents:")
-    for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
-        status = "✅" if name in orchestrator.specialist_agents else "⏳"
-        print(f"  {status} {name}")
-    
-    while True:
-        print("\n" + "="*70)
-        user_query = input("\n💬 Research question (or 'quit'): ")
-        
-        if user_query.lower() in ['quit', 'exit', 'q']:
-            print("\n👋 Goodbye!")
-            break
-        
-        if not user_query.strip():
-            continue
-        
-        try:
-            final_report = orchestrator.research(user_query)
-            print("\n" + "="*70)
-            print("📄 FINAL REPORT")
-            print("="*70)
-            print(f"\n{final_report}\n")
-        except Exception as e:
-            print(f"\n❌ Error: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()
