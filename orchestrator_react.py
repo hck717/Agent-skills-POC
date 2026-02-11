@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.6 - Automated Graph Seeding & Ticker Detection
+Version: 3.7 - Fix Ticker Extraction (Strict JSON)
 """
 
 import os
@@ -218,28 +218,43 @@ class ReActOrchestrator:
     
     def _extract_ticker(self, user_query: str, callback: Optional[Callable] = None) -> Optional[str]:
         """
-        Extract company ticker from user query using LLM
+        Extract company ticker from user query using LLM (Strict JSON Mode)
         """
         if callback:
              callback("Pre-Processing", "Identifying target company...", "running")
              
+        # 🔥 FIX: Force JSON structure to prevent "thinking" spam in response
         prompt = f"""
         Identify the primary stock ticker symbol for the company mentioned in this query.
-        Return ONLY the ticker symbol (e.g., AAPL, MSFT, TSLA, NVDA).
-        If no specific public company is found, return "NONE".
         
-        Query: "{user_query}"
+        QUERY: "{user_query}"
         
-        Ticker:
+        INSTRUCTIONS:
+        1. Return ONLY the ticker symbol (e.g., AAPL).
+        2. If no specific company, return "NONE".
+        3. Do NOT explain.
+        
+        OUTPUT FORMAT:
+        TICKER: <SYMBOL>
         """
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            response = self.client.chat(messages, temperature=0.0, num_predict=10)
-            ticker = response.strip().upper()
+            response = self.client.chat(messages, temperature=0.0, num_predict=50)
             
-            # Clean up response (remove punctuation, etc)
-            ticker = re.sub(r'[^A-Z]', '', ticker)
+            # 🔥 FIX: Robust regex to capture Ticker even if LLM adds text
+            match = re.search(r'TICKER:\s*([A-Z]+)', response, re.IGNORECASE)
+            if match:
+                ticker = match.group(1).upper()
+            else:
+                # Fallback: Just look for common tickers if regex fails
+                words = response.split()
+                ticker = "NONE"
+                for word in words:
+                    clean_word = re.sub(r'[^A-Z]', '', word.upper())
+                    if len(clean_word) >= 2 and len(clean_word) <= 5 and clean_word != "NONE":
+                        ticker = clean_word
+                        break
             
             if ticker == "NONE" or len(ticker) < 2:
                 if callback:
