@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.2 - Added Metadata Extraction (Timeframe & Topic Filtering)
+Version: 3.3 - Robust Ticker Extraction & Fallbacks
 """
 
 import os
@@ -57,7 +57,7 @@ class Action:
     task_description: Optional[str] = None
     reasoning: Optional[str] = None
     ticker: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict) # Added Metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class Observation:
@@ -165,6 +165,17 @@ class ReActOrchestrator:
         if callback:
              callback("Pre-Processing", "Identifying company and scope...", "running")
              
+        # 1. Try Simple Keyword Match First (Fast & Reliable)
+        ticker = None
+        q_lower = user_query.lower()
+        if "microsoft" in q_lower or "msft" in q_lower: ticker = "MSFT"
+        elif "apple" in q_lower or "aapl" in q_lower: ticker = "AAPL"
+        elif "tesla" in q_lower or "tsla" in q_lower: ticker = "TSLA"
+        elif "nvidia" in q_lower or "nvda" in q_lower: ticker = "NVDA"
+        elif "google" in q_lower or "goog" in q_lower: ticker = "GOOGL"
+        elif "amazon" in q_lower or "amzn" in q_lower: ticker = "AMZN"
+        
+        # 2. Use LLM for specific Metadata extraction
         prompt = f"""
         Analyze this query: '{user_query}'
         
@@ -184,43 +195,43 @@ class ReActOrchestrator:
             response = self.client.chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=150)
             clean_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
             
-            # Find JSON
+            metadata = {}
             match = re.search(r'\{.*\}', clean_response, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
-                ticker = data.get("ticker", "NONE")
+                llm_ticker = data.get("ticker", "NONE")
                 
-                # Cleanup Ticker
-                if ticker != "NONE":
-                    ticker = re.sub(r'[^A-Z]', '', ticker.upper())
-                else:
-                    # Fallback Logic
-                    if "apple" in user_query.lower(): ticker = "AAPL"
-                    elif "microsoft" in user_query.lower(): ticker = "MSFT"
+                # If LLM found a ticker and keyword match failed/missed it, use LLM's
+                if ticker is None and llm_ticker != "NONE":
+                    ticker = re.sub(r'[^A-Z]', '', llm_ticker.upper())
                 
-                # Cleanup Meta
                 metadata = {
                     "years": data.get("years", []),
                     "topics": data.get("topics", [])
                 }
+            
+            # Default fallback if still None
+            if ticker is None:
+                print("   ⚠️ No ticker identified. Defaulting to AAPL for POC.")
+                ticker = "AAPL" 
+
+            print(f"   🔍 Target: {ticker} | Meta: {metadata}")
+            if callback: callback("Pre-Processing", f"Identified: {ticker} ({metadata.get('years', 'All Time')})", "complete")
+            return ticker, metadata
                 
-                if ticker == "NONE":
-                    if callback: callback("Pre-Processing", "No specific company identified", "complete")
-                    return None, {}
-                
-                print(f"   🔍 Target: {ticker} | Meta: {metadata}")
-                if callback: callback("Pre-Processing", f"Identified: {ticker} ({metadata.get('years', 'All Time')})", "complete")
-                return ticker, metadata
-                
-            return None, {}
         except Exception as e:
             print(f"Meta extraction failed: {e}")
-            return None, {}
+            return ticker if ticker else "AAPL", {}
 
     def _auto_seed_graph(self, ticker: str, callback: Optional[Callable] = None):
         if not seed: return
         data_path = os.path.join("data", ticker)
-        if not os.path.exists(data_path): return
+        
+        # Check if data exists, if not, warn but don't crash
+        if not os.path.exists(data_path):
+            print(f"   ⚠️ No local data found for {ticker} in {data_path}")
+            if callback: callback("Graph Seeding", f"No data for {ticker}", "error")
+            return
 
         if callback: callback("Graph Seeding", f"Resetting & Ingesting {ticker}...", "running")
         try:
@@ -246,7 +257,7 @@ class ReActOrchestrator:
                 user_query, 
                 "Rule 1: Deep Reader", 
                 self.current_ticker,
-                self.current_metadata # Pass metadata
+                self.current_metadata
             )
 
         # Rule 2: ALWAYS call Web Search next for Hybrid Context
@@ -258,7 +269,7 @@ class ReActOrchestrator:
                 user_query, 
                 "Rule 2: Forced Web Context", 
                 self.current_ticker,
-                self.current_metadata # Pass metadata
+                self.current_metadata
             )
         
         return Action(ActionType.FINISH, reasoning="Analysis complete")
@@ -284,7 +295,7 @@ class ReActOrchestrator:
                 kwargs = {}
                 if 'ticker' in sig.parameters: kwargs['ticker'] = ticker or "AAPL"
                 if 'prior_analysis' in sig.parameters: kwargs['prior_analysis'] = "" 
-                if 'metadata' in sig.parameters: kwargs['metadata'] = metadata # Pass only if agent supports it
+                if 'metadata' in sig.parameters: kwargs['metadata'] = metadata 
                 
                 result = agent.analyze(task, **kwargs)
                 print(f"   ✅ {agent_name} completed ({len(result)} chars)")
@@ -344,7 +355,6 @@ class ReActOrchestrator:
 
         context = "\n\n".join([f"FROM {o['agent'].upper()}:\n{o['result']}" for o in outputs])
         
-        # Metadata context
         meta_context = f"Focused Years: {self.current_metadata.get('years', 'All')}\nTopics: {self.current_metadata.get('topics', 'General')}"
         
         prompt = f"""
