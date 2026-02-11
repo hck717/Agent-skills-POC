@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.8 - Fix Ticker Extraction (Lenient Parsing)
+Version: 3.9 - Fix Ticker Passing to Agents
 """
 
 import os
@@ -58,6 +58,7 @@ class Action:
     agent_name: Optional[str] = None
     task_description: Optional[str] = None
     reasoning: Optional[str] = None
+    ticker: Optional[str] = None  # 🔥 Added ticker field to Action
 
 
 @dataclass
@@ -193,6 +194,7 @@ class ReActOrchestrator:
         self.max_iterations = max_iterations
         self.specialist_agents = {}
         self.trace = ReActTrace()
+        self.current_ticker = None # 🔥 Track active ticker globally
 
         # Try to register the new CRAG agent automatically if class exists
         if BusinessAnalystCRAG:
@@ -333,7 +335,8 @@ class ReActOrchestrator:
                 action_type=ActionType.CALL_SPECIALIST,
                 agent_name="business_analyst_crag",
                 task_description=user_query,
-                reasoning="Rule 1: CRAG Business Analyst provides best-in-class foundation"
+                reasoning="Rule 1: CRAG Business Analyst provides best-in-class foundation",
+                ticker=self.current_ticker # 🔥 Pass current ticker
             )
 
         # Fallback to standard business analyst if CRAG not present
@@ -344,7 +347,8 @@ class ReActOrchestrator:
                 action_type=ActionType.CALL_SPECIALIST,
                 agent_name="business_analyst",
                 task_description=user_query,
-                reasoning="Fallback: Standard Business Analyst"
+                reasoning="Fallback: Standard Business Analyst",
+                ticker=self.current_ticker
             )
         
         # 🟢 Rule 2: Call web_search_agent AFTER analysis (if available)
@@ -370,7 +374,8 @@ class ReActOrchestrator:
                 action_type=ActionType.CALL_SPECIALIST,
                 agent_name="web_search_agent",
                 task_description=user_query,
-                reasoning="Rule 2: Web Search Agent supplements with recent info"
+                reasoning="Rule 2: Web Search Agent supplements with recent info",
+                ticker=self.current_ticker
             )
         
         # Rule 3: Finish after both agents called (or max iterations)
@@ -394,7 +399,7 @@ class ReActOrchestrator:
             if callback:
                 callback(f"Action: {action.agent_name}", f"Executing {action.agent_name}...", "running")
             
-            result = self._call_specialist(action.agent_name, action.task_description)
+            result = self._call_specialist(action.agent_name, action.task_description, action.ticker)
             
             if callback:
                 callback(f"Action: {action.agent_name}", f"Completed {action.agent_name}", "complete")
@@ -423,29 +428,37 @@ class ReActOrchestrator:
                 success=False
             )
     
-    def _call_specialist(self, agent_name: str, task: str) -> str:
+    def _call_specialist(self, agent_name: str, task: str, ticker: str = None) -> str:
         """Call a specialist agent"""
-        print(f"   🤖 Calling {agent_name}...")
+        print(f"   🤖 Calling {agent_name} (Ticker: {ticker})...")
         
         if agent_name in self.specialist_agents:
             agent = self.specialist_agents[agent_name]
             try:
-                # For web_search_agent, pass prior analysis if available
-                if agent_name == "web_search_agent" and hasattr(agent, 'analyze'):
-                    # Get prior output
+                # 🟢 NEW: Check if agent accepts 'ticker' argument
+                import inspect
+                sig = inspect.signature(agent.analyze)
+                has_ticker = 'ticker' in sig.parameters
+                has_prior = 'prior_analysis' in sig.parameters
+                
+                # Dynamic dispatch based on signature
+                if has_ticker and has_prior:
                     prior_analysis = ""
-                    for obs in self.trace.observations:
-                        if obs.action.agent_name in ["business_analyst", "business_analyst_crag"]:
-                            prior_analysis = obs.result
-                            break
+                    if agent_name == "web_search_agent":
+                        for obs in self.trace.observations:
+                            if obs.action.agent_name in ["business_analyst", "business_analyst_crag"]:
+                                prior_analysis = obs.result
+                                break
+                    result = agent.analyze(task, ticker=ticker or "AAPL", prior_analysis=prior_analysis)
                     
-                    result = agent.analyze(task, prior_analysis=prior_analysis)
+                elif has_ticker:
+                    result = agent.analyze(task, ticker=ticker or "AAPL")
+                    
+                elif has_prior:
+                    result = agent.analyze(task, prior_analysis="")
+                    
                 else:
-                    # Generic call
-                    try:
-                        result = agent.analyze(task, prior_analysis="")
-                    except TypeError:
-                         result = agent.analyze(task)
+                    result = agent.analyze(task)
                 
                 print(f"   ✅ {agent_name} completed ({len(result)} chars)")
                 return result
@@ -866,6 +879,7 @@ GENERATE 10/10 INSTITUTIONAL-GRADE REPORT NOW
         print(f"📊 Registered Agents: {', '.join(self.specialist_agents.keys()) if self.specialist_agents else 'None'}")
         
         self.trace = ReActTrace()
+        self.current_ticker = None # Reset
         
         # Initial UI Update
         if callback:
@@ -874,6 +888,7 @@ GENERATE 10/10 INSTITUTIONAL-GRADE REPORT NOW
         # 🔥 STEP 0: AUTO-SEED GRAPH
         ticker = self._extract_ticker(user_query, callback)
         if ticker:
+            self.current_ticker = ticker # Set globally
             self._auto_seed_graph(ticker, callback)
         
         for iteration in range(1, self.max_iterations + 1):
