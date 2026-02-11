@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.3 - Robust Ticker Extraction & Fallbacks
+Version: 3.4 - Unlimited Timeout for Local Inference
 """
 
 import os
@@ -89,7 +89,7 @@ class OllamaClient:
         self.base_url = base_url
         self.model = model
     
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.2, num_predict: int = 4000, timeout: int = 600) -> str:
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.2, num_predict: int = 4000, timeout: int = None) -> str:
         url = f"{self.base_url}/api/chat"
         payload = {
             "model": self.model,
@@ -98,7 +98,8 @@ class OllamaClient:
             "options": {"temperature": temperature, "num_predict": num_predict}
         }
         try:
-            response = requests.post(url, json=payload, timeout=timeout)
+            # REMOVED timeout=600 to allow unlimited processing time
+            response = requests.post(url, json=payload)
             response.raise_for_status()
             return response.json()["message"]["content"]
         except Exception as e:
@@ -165,7 +166,7 @@ class ReActOrchestrator:
         if callback:
              callback("Pre-Processing", "Identifying company and scope...", "running")
              
-        # 1. Try Simple Keyword Match First (Fast & Reliable)
+        # 1. Try Simple Keyword Match First
         ticker = None
         q_lower = user_query.lower()
         if "microsoft" in q_lower or "msft" in q_lower: ticker = "MSFT"
@@ -201,7 +202,6 @@ class ReActOrchestrator:
                 data = json.loads(match.group(0))
                 llm_ticker = data.get("ticker", "NONE")
                 
-                # If LLM found a ticker and keyword match failed/missed it, use LLM's
                 if ticker is None and llm_ticker != "NONE":
                     ticker = re.sub(r'[^A-Z]', '', llm_ticker.upper())
                 
@@ -210,7 +210,6 @@ class ReActOrchestrator:
                     "topics": data.get("topics", [])
                 }
             
-            # Default fallback if still None
             if ticker is None:
                 print("   ⚠️ No ticker identified. Defaulting to AAPL for POC.")
                 ticker = "AAPL" 
@@ -227,7 +226,6 @@ class ReActOrchestrator:
         if not seed: return
         data_path = os.path.join("data", ticker)
         
-        # Check if data exists, if not, warn but don't crash
         if not os.path.exists(data_path):
             print(f"   ⚠️ No local data found for {ticker} in {data_path}")
             if callback: callback("Graph Seeding", f"No data for {ticker}", "error")
