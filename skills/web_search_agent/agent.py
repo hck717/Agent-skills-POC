@@ -47,7 +47,12 @@ class WebSearchAgent:
         print(f"✅ Web Search Agent initialized (News Desk, model={ollama_model})")
 
     def _clean_think(self, text: str) -> str:
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        """Removes <think>...</think> blocks from DeepSeek output."""
+        # Remove entire think blocks (DOTALL matches newlines)
+        clean = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        # Remove standalone tags if any remain
+        clean = clean.replace("<think>", "").replace("</think>", "")
+        return clean.strip()
 
     def _ollama_chat(self, messages: List[Dict], temperature: float = 0.0, num_predict: int = 400) -> str:
         try:
@@ -181,8 +186,11 @@ class WebSearchAgent:
     def analyze(self, query: str, prior_analysis: str = "", metadata: Dict = {}) -> str:
         print(f"\n🌐 News Desk analyzing: '{query}'")
         
-        # 1. Generate Queries
+        # 1. Generate Queries (Safe)
         step_back = self._step_back_query(query)
+        # Sanity check step-back
+        if "<think>" in step_back: step_back = ""
+        
         hyde = self._hyde_brief(query, prior_analysis)
         hyde_queries = self._hyde_queries_from_brief(hyde, max_queries=2)
         
@@ -191,8 +199,19 @@ class WebSearchAgent:
         target_year = meta_years[0] if meta_years else year
         direct = f"{query} news {target_year}"
         
-        # 2. Search
-        queries = list(set([direct, step_back] + hyde_queries))
+        # 2. Search (with sanitization)
+        queries = [direct] # Direct query is mandatory
+        
+        if step_back and len(step_back) > 5:
+            queries.append(step_back)
+            
+        for q in hyde_queries:
+            # Filter garbage queries from HyDE
+            if isinstance(q, str) and len(q) > 3 and "<think>" not in q:
+                queries.append(q)
+                
+        # Dedupe
+        queries = list(set(queries))
         print(f"   🔍 Queries: {queries}")
         
         all_results = []
