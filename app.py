@@ -1,184 +1,168 @@
 import streamlit as st
-import os
-import asyncio
-from dotenv import load_dotenv
+import time
 from orchestrator_react import ReActOrchestrator
-from skills.web_search_agent.agent import WebSearchAgent
-# 🔥 FIX: Import the correct class name from graph_agent
-from skills.business_analyst_standard.graph_agent import BusinessAnalystGraphAgent as BusinessAnalystStandard
-from scripts.seed_neo4j_ba_graph import seed
 
-try:
-    from skills.business_analyst_crag import BusinessAnalystCRAG
-except ImportError:
-    BusinessAnalystCRAG = None
+# Config
+st.set_page_config(
+    page_title="Agentic Equity Research (DeepSeek R1)", 
+    page_icon="📈", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Load .env initially to populate defaults
-load_dotenv()
+# Custom CSS
+st.markdown("""
+<style>
+    .report-font { font-family: 'Times New Roman', serif; font-size: 1.1rem; }
+    .stCodeBlock { background-color: #f8f9fa; }
+    .agent-thought { border-left: 3px solid #0066cc; padding-left: 1rem; margin: 0.5rem 0; color: #404040; font-style: italic; }
+    .agent-action { border-left: 3px solid #28a745; padding-left: 1rem; margin: 0.5rem 0; background-color: #f0fff4; }
+    .metric-card { background-color: white; padding: 1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }
+</style>
+""", unsafe_allow_html=True)
 
-def main():
-    st.set_page_config(
-        page_title="Agent Skills POC",
-        page_icon="🤖",
-        layout="wide"
+# Session State
+if 'orchestrator' not in st.session_state:
+    try:
+        st.session_state.orchestrator = ReActOrchestrator(max_iterations=3)
+    except Exception as e:
+        st.error(f"Failed to initialize: {e}")
+
+if 'trace_logs' not in st.session_state:
+    st.session_state.trace_logs = []
+
+if 'current_status' not in st.session_state:
+    st.session_state.current_status = "Ready"
+
+def update_callback(step: str, detail: str, status: str):
+    """Callback to update UI from orchestrator"""
+    # Map status to icon
+    icon = "⏳"
+    if status == "running": icon = "🔄"
+    elif status == "complete": icon = "✅"
+    elif status == "error": icon = "❌"
+    
+    # Add log entry
+    timestamp = time.strftime("%H:%M:%S")
+    st.session_state.trace_logs.append({
+        "time": timestamp,
+        "step": step,
+        "detail": detail,
+        "icon": icon
+    })
+    
+    # Update status bar
+    st.session_state.current_status = f"{icon} {step}: {detail}"
+    
+    # Force refresh (using empty container trick)
+    # Note: Streamlit doesn't support easy background updates, so we rely on re-renders
+    pass
+
+# Sidebar
+with st.sidebar:
+    st.title("📈 Agent Settings")
+    
+    model_choice = st.selectbox(
+        "Reasoning Model",
+        ["DeepSeek-R1 8B (Recommended)", "Qwen 2.5 7B"],
+        index=0
     )
-
-    st.title("🤖 Enterprise Agent Skills POC")
-    st.markdown("ReAct Orchestrator with Specialist Agents")
-
-    # Sidebar configuration
-    st.sidebar.header("Configuration")
     
-    # Model Selection
-    model_options = ["deepseek-r1:8b", "llama3", "mistral", "qwen2.5:7b"]
-    selected_model = st.sidebar.selectbox("Analysis Model", model_options, index=0)
-
-    # 🔐 Database Credentials (UI Overrides)
-    with st.sidebar.expander("🔐 Database Credentials", expanded=False):
-        st.caption("Override .env defaults here")
-        
-        qdrant_url = st.text_input(
-            "Qdrant URL", 
-            value=os.getenv("QDRANT_URL", ""),
-            type="default",
-            placeholder="https://xyz.qdrant.io"
-        )
-        
-        qdrant_key = st.text_input(
-            "Qdrant API Key", 
-            value=os.getenv("QDRANT_API_KEY", ""),
-            type="password"
-        )
-        
-        neo4j_uri = st.text_input(
-            "Neo4j URI", 
-            value=os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        )
-        
-        neo4j_user = st.text_input(
-            "Neo4j User",
-            value=os.getenv("NEO4J_USER", "neo4j")
-        )
-        
-        neo4j_pass = st.text_input(
-            "Neo4j Password", 
-            value=os.getenv("NEO4J_PASSWORD", ""),
-            type="password"
-        )
-
-    # Data Management
-    with st.sidebar.expander("💾 Data Management", expanded=False):
-        st.caption("Manage Local Knowledge Graph")
-        if st.button("🌱 Seed Graph DB (All Data)"):
-            data_dir = "./data"
-            if os.path.exists(data_dir):
-                tickers = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d)) and not d.startswith('.')]
-                
-                if not tickers:
-                     st.sidebar.warning("No ticker folders found in ./data")
-                else:
-                    progress_bar = st.sidebar.progress(0)
-                    status_text = st.sidebar.empty()
-                    
-                    for i, ticker in enumerate(tickers):
-                        status_text.text(f"Seeding {ticker}...")
-                        try:
-                            seed(
-                                uri=neo4j_uri,
-                                user=neo4j_user,
-                                password=neo4j_pass if neo4j_pass else "password",
-                                ticker=ticker,
-                                reset=True
-                            )
-                        except Exception as e:
-                            st.sidebar.error(f"Failed to seed {ticker}: {e}")
-                        
-                        progress_bar.progress((i + 1) / len(tickers))
-                    
-                    status_text.text("✅ Seeding Complete!")
-                    st.sidebar.success(f"Seeded {len(tickers)} tickers to Neo4j")
-            else:
-                st.sidebar.error("Data directory not found")
-
-    # Agent Selection
-    st.sidebar.subheader("Active Agents")
-    use_crag = st.sidebar.checkbox("Business Analyst CRAG (Deep Reader)", value=True, disabled=BusinessAnalystCRAG is None)
-    use_standard = st.sidebar.checkbox("Business Analyst Standard", value=False)
-    use_web = st.sidebar.checkbox("Web Search Agent", value=True)
+    st.info("""
+    **Architecture:**
+    - **ReAct Orchestrator**: Rule-based + LLM
+    - **Deep Reader (CRAG)**: 10-K Analysis (Neo4j + Qdrant)
+    - **Web Agent**: Real-time Market Data
+    """)
     
-    if BusinessAnalystCRAG is None:
-        st.sidebar.warning("BusinessAnalystCRAG not found/installed")
+    st.divider()
+    st.markdown("### 🔍 Transparency")
+    st.checkbox("Show Raw Trace", value=True, key="show_trace")
+    st.checkbox("Show Citations", value=True, key="show_cites")
 
-    # Layout: Split Screen
-    # Left: Chat/Report
-    # Right: Chain of Thought Logs (Glass Box)
-    col1, col2 = st.columns([0.65, 0.35], gap="medium")
+# Main Interface
+st.title("📈 Agentic Equity Research Analyst")
+st.markdown("*Institutional-grade analysis powered by GraphRAG & DeepSeek R1*")
 
-    with col2:
-        st.subheader("🧠 System Reasoning (Live)")
-        log_container = st.container(height=600, border=True)
+# Input
+query = st.text_input(
+    "Research Query", 
+    placeholder="e.g., Analyze Apple's 2026 business model and risks...",
+    help="Enter a ticker or company name. The system will auto-seed the graph DB."
+)
 
-    with col1:
-        # Chat Interface
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+col1, col2 = st.columns([1, 4])
+with col1:
+    search_btn = st.button("🚀 Start Research", use_container_width=True, type="primary")
 
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+# Layout
+left_col, right_col = st.columns([1.5, 1])
 
-        if prompt := st.chat_input("Ask a research question..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+if search_btn and query:
+    # Clear logs
+    st.session_state.trace_logs = []
+    
+    # Running State
+    with left_col:
+        status_container = st.empty()
+        report_container = st.container()
+    
+    with right_col:
+        st.subheader("🧠 Thought Process (Live)")
+        log_container = st.empty()
+        
+        # Display logs function
+        def render_logs():
+            logs_md = ""
+            for log in reversed(st.session_state.trace_logs):
+                logs_md += f"**{log['time']}** {log['icon']} **{log['step']}**\n\n{log['detail']}\n\n---\n\n"
+            log_container.markdown(logs_md)
 
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-                
-                # Re-initialize/Update orchestrator with current settings
-                orchestrator = ReActOrchestrator() 
-                
-                # Register Selected Agents
-                if use_crag and BusinessAnalystCRAG:
-                    crag_agent = BusinessAnalystCRAG(
-                        qdrant_url=qdrant_url if qdrant_url else None,
-                        qdrant_key=qdrant_key if qdrant_key else None,
-                        neo4j_uri=neo4j_uri,
-                        neo4j_user=neo4j_user,
-                        neo4j_pass=neo4j_pass
-                    )
-                    orchestrator.register_specialist("business_analyst_crag", crag_agent)
-                
-                if use_standard:
-                     orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model_name=selected_model))
-                
-                if use_web:
-                     try:
-                        orchestrator.register_specialist("web_search_agent", WebSearchAgent())
-                     except Exception as e:
-                        st.error(f"Failed to load Web Agent: {e}")
+    # Execute Research
+    try:
+        # We need to wrap the orchestrator call to capture updates
+        # Since the orchestrator is synchronous, we pass the callback
+        
+        # Define a wrapper that updates the specific UI elements
+        def ui_callback(step, detail, status):
+            update_callback(step, detail, status)
+            status_container.info(f"**{step}**: {detail}")
+            render_logs()
+            # time.sleep(0.1) # UI visual pacing
+        
+        # Run
+        with st.spinner("🤖 Agents orchestrating..."):
+            final_report = st.session_state.orchestrator.research(query, callback=ui_callback)
+        
+        # Success
+        status_container.success("✅ Analysis Complete")
+        
+        # Render Report
+        with report_container:
+            st.markdown("## 📄 Final Research Report")
+            st.markdown(f"<div class='report-font'>{final_report}</div>", unsafe_allow_html=True)
+            
+    except Exception as e:
+        status_container.error(f"❌ Critical Error: {str(e)}")
+        st.exception(e)
 
-                # Callback for Right Column Logging
-                def ui_callback(step: str, detail: str, status: str):
-                    with log_container:
-                        if status == "running":
-                            st.info(f"**{step}**: {detail}")
-                        elif status == "complete":
-                            st.success(f"✅ **{step}**: {detail}")
-                        elif status == "error":
-                            st.error(f"❌ **{step}**: {detail}")
-                
-                try:
-                    # Run research with callback
-                    final_report = orchestrator.research(prompt, callback=ui_callback)
-                    full_response = final_report
-                    message_placeholder.markdown(full_response)
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-                    full_response = f"Error: {str(e)}"
-
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-if __name__ == "__main__":
-    main()
+else:
+    with left_col:
+        st.info("👋 Ready to research. Enter a query above.")
+        
+    with right_col:
+        st.markdown("### 🧠 System Capabilities")
+        st.markdown("""
+        **1. Auto-Seeding Graph DB**
+        - Detects company from query (e.g., "Apple" -> AAPL)
+        - Wipes & re-seeds Neo4j with specific company data
+        
+        **2. Deep Reader Agent (CRAG)**
+        - Retrieval: Hybrid (Vector + Graph)
+        - Ingestion: Semantic Chunking (Atomic Propositions)
+        - Evaluation: Self-Corrective RAG
+        
+        **3. Web Search Agent**
+        - Live market data & news
+        - Fallback for missing 10-K data
+        """)
