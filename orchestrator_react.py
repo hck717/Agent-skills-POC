@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.7 - Fix Ticker Extraction (Strict JSON)
+Version: 3.8 - Fix Ticker Extraction (Lenient Parsing)
 """
 
 import os
@@ -218,45 +218,46 @@ class ReActOrchestrator:
     
     def _extract_ticker(self, user_query: str, callback: Optional[Callable] = None) -> Optional[str]:
         """
-        Extract company ticker from user query using LLM (Strict JSON Mode)
+        Extract company ticker from user query using LLM (Lenient Parsing)
         """
         if callback:
              callback("Pre-Processing", "Identifying target company...", "running")
              
-        # 🔥 FIX: Force JSON structure to prevent "thinking" spam in response
+        # 🔥 FIX: Remove complex JSON requirement, DeepSeek is failing it.
+        # Just ask for the ticker word directly.
         prompt = f"""
-        Identify the primary stock ticker symbol for the company mentioned in this query.
+        User Query: "{user_query}"
         
-        QUERY: "{user_query}"
-        
-        INSTRUCTIONS:
-        1. Return ONLY the ticker symbol (e.g., AAPL).
-        2. If no specific company, return "NONE".
-        3. Do NOT explain.
-        
-        OUTPUT FORMAT:
-        TICKER: <SYMBOL>
+        Extract the company ticker symbol (e.g., AAPL). 
+        If no specific company, say NONE.
+        Output ONLY the ticker.
         """
         
         try:
             messages = [{"role": "user", "content": prompt}]
             response = self.client.chat(messages, temperature=0.0, num_predict=50)
             
-            # 🔥 FIX: Robust regex to capture Ticker even if LLM adds text
-            match = re.search(r'TICKER:\s*([A-Z]+)', response, re.IGNORECASE)
-            if match:
-                ticker = match.group(1).upper()
-            else:
-                # Fallback: Just look for common tickers if regex fails
-                words = response.split()
-                ticker = "NONE"
-                for word in words:
-                    clean_word = re.sub(r'[^A-Z]', '', word.upper())
-                    if len(clean_word) >= 2 and len(clean_word) <= 5 and clean_word != "NONE":
-                        ticker = clean_word
-                        break
+            # 🔥 FIX: Clean <think> tags if they still appear
+            clean_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
             
-            if ticker == "NONE" or len(ticker) < 2:
+            # Find first valid ticker-like word
+            ticker = "NONE"
+            words = clean_response.split()
+            for word in words:
+                # Remove punctuation
+                clean_word = re.sub(r'[^A-Z]', '', word.upper())
+                # Check if it looks like a ticker (2-5 chars, not common words)
+                if 2 <= len(clean_word) <= 5 and clean_word not in ["THE", "AND", "FOR", "NONE", "WHAT", "USER"]:
+                    ticker = clean_word
+                    break
+            
+            # Special case for "Apple" -> AAPL map if model fails
+            if ticker == "NONE" and "apple" in user_query.lower():
+                ticker = "AAPL"
+            elif ticker == "NONE" and "microsoft" in user_query.lower():
+                ticker = "MSFT"
+            
+            if ticker == "NONE":
                 if callback:
                     callback("Pre-Processing", "No specific company identified", "complete")
                 return None
