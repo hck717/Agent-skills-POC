@@ -24,7 +24,9 @@ class CragEvaluator:
         """
         
         try:
+            # FIX: Explicitly specify model parameter to avoid Pydantic validation error
             response = self.client.chat(
+                model="deepseek-r1:8b", 
                 messages=[{'role': 'user', 'content': prompt}],
                 options={'temperature': 0.0}
             )
