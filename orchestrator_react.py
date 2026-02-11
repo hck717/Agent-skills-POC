@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 2.2 - Hybrid Model Approach (10/10 Quality + Performance)
+Version: 2.3 - Added Business Analyst CRAG (v2)
 """
 
 import os
@@ -17,6 +17,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 import requests
+
+# Import the new agent
+try:
+    from skills.business_analyst_crag import BusinessAnalystCRAG
+except ImportError:
+    print("⚠️ Could not import BusinessAnalystCRAG. Ensure skills/business_analyst_crag exists.")
+    BusinessAnalystCRAG = None
 
 
 class ActionType(Enum):
@@ -137,15 +144,20 @@ class ReActOrchestrator:
     SYNTHESIS_MODEL = "qwen2.5:7b"      # Fast synthesis for final report combining
     
     SPECIALIST_AGENTS = {
+        "business_analyst_crag": {
+            "description": "Deep Reader (v2) - Graph-Augmented Corrective RAG for 10-K analysis",
+            "keywords": ["strategy", "risk", "10-k", "deep dive"],
+            "priority": 1  # Top Priority
+        },
         "business_analyst": {
             "description": "Analyzes 10-K filings, financial statements, competitive positioning using RAG",
             "keywords": ["10-K", "10-Q", "filing", "risk", "competitive", "financial"],
-            "priority": 1  # Always first
+            "priority": 2
         },
         "web_search_agent": {
             "description": "Supplements document analysis with current web info (news, market data, analyst opinions)",
             "keywords": ["recent", "current", "latest", "news", "market", "price"],
-            "priority": 2  # Always after business_analyst
+            "priority": 3  # After Analysts
         },
         "quantitative_analyst": {
             "description": "Performs quantitative analysis, ratios, valuation metrics",
@@ -171,6 +183,15 @@ class ReActOrchestrator:
         self.max_iterations = max_iterations
         self.specialist_agents = {}
         self.trace = ReActTrace()
+
+        # Try to register the new CRAG agent automatically if class exists
+        if BusinessAnalystCRAG:
+            try:
+                # Assuming clients are managed inside the agent or passed here. 
+                # For POC integration, we instantiate with defaults or None
+                self.register_specialist("business_analyst_crag", BusinessAnalystCRAG())
+            except Exception as e:
+                print(f"⚠️ Failed to auto-register business_analyst_crag: {e}")
         
     def register_specialist(self, agent_name: str, agent_instance):
         """Register a specialist agent implementation"""
@@ -185,7 +206,7 @@ class ReActOrchestrator:
         RULE-BASED REASONING
         
         Rules:
-        - Iteration 1: Call business_analyst (document analysis)
+        - Iteration 1: Call business_analyst_crag (Deep Reader)
         - Iteration 2: Call web_search_agent (supplement with web data)
         - Iteration 3: Finish and synthesize
         """
@@ -194,30 +215,44 @@ class ReActOrchestrator:
         query_lower = user_query.lower()
         called_agents = self.trace.get_specialist_calls()
         
-        # 🟢 Rule 1: ALWAYS call business_analyst first (if available)
-        if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents:
-            thought = "Starting with Business Analyst for document-based analysis"
+        # 🟢 Rule 1: ALWAYS call business_analyst_crag first (if available)
+        if "business_analyst_crag" in self.specialist_agents and "business_analyst_crag" not in called_agents:
+            thought = "Starting with Deep Reader (CRAG) for high-accuracy document analysis"
             self.trace.add_thought(thought, iteration)
             print(f"   💡 {thought}")
             
             return Action(
                 action_type=ActionType.CALL_SPECIALIST,
+                agent_name="business_analyst_crag",
+                task_description=user_query,
+                reasoning="Rule 1: CRAG Business Analyst provides best-in-class foundation"
+            )
+
+        # Fallback to standard business analyst if CRAG not present
+        if "business_analyst" in self.specialist_agents and "business_analyst" not in called_agents and "business_analyst_crag" not in called_agents:
+             thought = "Starting with Standard Business Analyst"
+             self.trace.add_thought(thought, iteration)
+             return Action(
+                action_type=ActionType.CALL_SPECIALIST,
                 agent_name="business_analyst",
                 task_description=user_query,
-                reasoning="Rule 1: Business Analyst provides foundational document analysis"
+                reasoning="Fallback: Standard Business Analyst"
             )
         
-        # 🟢 Rule 2: Call web_search_agent AFTER business_analyst (if available)
-        if "web_search_agent" in self.specialist_agents and "web_search_agent" not in called_agents and "business_analyst" in called_agents:
+        # 🟢 Rule 2: Call web_search_agent AFTER analysis (if available)
+        # Check if ANY analyst ran
+        analyst_ran = "business_analyst_crag" in called_agents or "business_analyst" in called_agents
+        
+        if "web_search_agent" in self.specialist_agents and "web_search_agent" not in called_agents and analyst_ran:
             thought = "Calling Web Search Agent to supplement document analysis with current data"
             self.trace.add_thought(thought, iteration)
             print(f"   💡 {thought}")
             
-            # Get business analyst's output to pass as context
-            business_analyst_output = ""
+            # Get analyst's output to pass as context
+            prior_output = ""
             for obs in self.trace.observations:
-                if obs.action.agent_name == "business_analyst":
-                    business_analyst_output = obs.result
+                if obs.action.agent_name in ["business_analyst", "business_analyst_crag"]:
+                    prior_output = obs.result
                     break
             
             return Action(
@@ -273,16 +308,23 @@ class ReActOrchestrator:
             try:
                 # For web_search_agent, pass prior analysis if available
                 if agent_name == "web_search_agent" and hasattr(agent, 'analyze'):
-                    # Get business analyst output
+                    # Get prior output
                     prior_analysis = ""
                     for obs in self.trace.observations:
-                        if obs.action.agent_name == "business_analyst":
+                        if obs.action.agent_name in ["business_analyst", "business_analyst_crag"]:
                             prior_analysis = obs.result
                             break
                     
                     result = agent.analyze(task, prior_analysis=prior_analysis)
                 else:
-                    result = agent.analyze(task)
+                    # Generic call
+                    # Some agents might support prior_analysis, others not. 
+                    # Python's flexible args usually handle this if defined with defaults,
+                    # but strictly, we should inspect signature or try/except.
+                    try:
+                        result = agent.analyze(task, prior_analysis="")
+                    except TypeError:
+                         result = agent.analyze(task)
                 
                 print(f"   ✅ {agent_name} completed ({len(result)} chars)")
                 return result
@@ -678,8 +720,9 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
     def research(self, user_query: str) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
-        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.2")
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.3")
         print("   10/10 Quality + Performance (Hybrid: DeepSeek + Qwen)")
+        print("   Enhanced with CRAG Deep Reader")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
         print(f"🔄 Max Iterations: {self.max_iterations}")
@@ -739,7 +782,7 @@ def main():
         print(f"❌ {str(e)}")
         return
     
-    print("\n🚀 Professional Equity Research Orchestrator v2.2 Ready")
+    print("\n🚀 Professional Equity Research Orchestrator v2.3 Ready")
     print("   10/10 Quality Standard (Hybrid: DeepSeek-R1 8B + Qwen 2.5 7B)")
     print("\n🎯 Model Strategy:")
     print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
