@@ -32,15 +32,15 @@ class AgentState(TypedDict):
     tickers: List[str]  # Companies identified
 
 class BusinessAnalystGraphAgent:
-    def __init__(self, data_path="./data", db_path="./storage/chroma_db"):
+    def __init__(self, data_path="./data", db_path="./storage/chroma_db", model_name="deepseek-r1:8b"):
         self.data_path = data_path
         self.db_path = db_path
         
-        print(f"🚀 Initializing HYBRID SEARCH Analyst Agent v24.0 (DeepSeek-R1 8B)...")
+        print(f"🚀 Initializing HYBRID SEARCH Analyst Agent v24.0 ({model_name})...")
         print(f"   Features: Vector Search + BM25 + Advanced Re-ranking")
         
         # Models
-        self.chat_model_name = "deepseek-r1:8b"
+        self.chat_model_name = model_name
         self.embed_model_name = "nomic-embed-text"
         # 🔥 UPGRADE: Better re-ranker (12-layer vs 6-layer)
         self.rerank_model_name = "cross-encoder/ms-marco-MiniLM-L-12-v2"
@@ -628,7 +628,10 @@ class BusinessAnalystGraphAgent:
             print(f"   Hybrid search: DISABLED (Vector only)")
         print(f"{'='*60}\n")
 
-    def analyze(self, query: str):
+    def analyze(self, query: str, prior_analysis: str = ""):
+        """
+        Analyze logic compatible with Orchestrator
+        """
         print(f"🤖 User Query: '{query}'")
         inputs = {"messages": [HumanMessage(content=query)]}
         result = self.app.invoke(inputs)
