@@ -69,7 +69,6 @@ class BusinessAnalystCRAG:
             print("   ⚠️ Context irrelevant/missing. Triggering Web Search Fallback...")
             if self.tavily:
                 web_results = self.tavily.search(query, max_results=3)
-                # Ensure we handle list/dict return types from Tavily client wrapper
                 if isinstance(web_results, dict) and 'results' in web_results:
                      final_context = [f"WEB SOURCE: {r['content']}" for r in web_results['results']]
                 else:
@@ -81,21 +80,30 @@ class BusinessAnalystCRAG:
             print("   🔄 Context ambiguous. Proceeding with warning...")
             final_context.append("NOTE: Context might be partial or ambiguous.")
 
-        # 4. Generation
+        # 4. Generation with Strategic Frameworks
         print("   📝 Generating Answer...")
         
         context_str = "\n".join([str(c) for c in final_context])
         
         prompt = f"""
-        You are a Deep Reader Business Analyst.
-        Answer based on the verified context below.
+        You are a Senior Business Strategy Analyst (CFA/MBA level).
+        Your task is to analyze the following verified context and answer the query using professional strategic frameworks.
         
-        VERIFIED CONTEXT:
+        VERIFIED CONTEXT FROM 10-K/GRAPH:
         {context_str}
         
-        QUERY: {query}
+        USER QUERY: {query}
         
-        ANALYSIS:
+        INSTRUCTIONS:
+        1. Answer the query directly using the Evidence provided.
+        2. If the query implies strategic analysis, use relevant frameworks where appropriate:
+           - SWOT (Strengths, Weaknesses, Opportunities, Threats)
+           - Porter's 5 Forces (Competition, Suppliers, Buyers, etc.)
+           - PESTLE (Political, Economic, etc.)
+        3. Highlight specific RISKS (Operational, Financial, Strategic) found in the context.
+        4. Maintain a professional, objective tone suitable for an investment memo.
+        
+        STRATEGIC ANALYSIS:
         """
         
         try:
