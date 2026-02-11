@@ -109,78 +109,76 @@ def main():
     if BusinessAnalystCRAG is None:
         st.sidebar.warning("BusinessAnalystCRAG not found/installed")
 
-    # Chat Interface
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # Layout: Split Screen
+    # Left: Chat/Report
+    # Right: Chain of Thought Logs (Glass Box)
+    col1, col2 = st.columns([0.65, 0.35], gap="medium")
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    with col2:
+        st.subheader("🧠 System Reasoning (Live)")
+        log_container = st.container(height=600, border=True)
 
-    if prompt := st.chat_input("Ask a research question..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    with col1:
+        # Chat Interface
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            
-            # Re-initialize/Update orchestrator with current settings
-            orchestrator = ReActOrchestrator() # Orchestrator uses its own models defined in class
-            
-            # Register Selected Agents with UI Credentials
-            if use_crag and BusinessAnalystCRAG:
-                # Instantiate with UI values
-                crag_agent = BusinessAnalystCRAG(
-                    qdrant_url=qdrant_url if qdrant_url else None,
-                    qdrant_key=qdrant_key if qdrant_key else None,
-                    neo4j_uri=neo4j_uri,
-                    neo4j_user=neo4j_user,
-                    neo4j_pass=neo4j_pass
-                )
-                orchestrator.register_specialist("business_analyst_crag", crag_agent)
-            
-            if use_standard:
-                 # 🔥 FIX: Pass model_name instead of model
-                 orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model_name=selected_model))
-            
-            if use_web:
-                 try:
-                    orchestrator.register_specialist("web_search_agent", WebSearchAgent())
-                 except Exception as e:
-                    st.error(f"Failed to load Web Agent: {e}")
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-            # 🔥 UI: Chain of Thought Visualization
-            status_container = st.status("🤖 Orchestrator working...", expanded=True)
-            
-            def ui_callback(step: str, detail: str, status: str):
-                """Callback to update Streamlit UI from Orchestrator"""
-                # Log to console for debugging
-                print(f"[UI] {step}: {detail} ({status})")
+        if prompt := st.chat_input("Ask a research question..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
                 
-                if status == "running":
-                    status_container.write(f"**{step}**: {detail}")
-                elif status == "complete":
-                    status_container.write(f"✅ **{step}**: {detail}")
-                elif status == "error":
-                    status_container.error(f"❌ **{step}**: {detail}")
-            
-            try:
-                # Run research with callback
-                final_report = orchestrator.research(prompt, callback=ui_callback)
+                # Re-initialize/Update orchestrator with current settings
+                orchestrator = ReActOrchestrator() 
                 
-                # Close status container
-                status_container.update(label="✅ Analysis Complete", state="complete", expanded=False)
+                # Register Selected Agents
+                if use_crag and BusinessAnalystCRAG:
+                    crag_agent = BusinessAnalystCRAG(
+                        qdrant_url=qdrant_url if qdrant_url else None,
+                        qdrant_key=qdrant_key if qdrant_key else None,
+                        neo4j_uri=neo4j_uri,
+                        neo4j_user=neo4j_user,
+                        neo4j_pass=neo4j_pass
+                    )
+                    orchestrator.register_specialist("business_analyst_crag", crag_agent)
                 
-                full_response = final_report
-                message_placeholder.markdown(full_response)
-            except Exception as e:
-                status_container.update(label="❌ Analysis Failed", state="error", expanded=True)
-                st.error(f"Error: {str(e)}")
-                full_response = f"Error: {str(e)}"
+                if use_standard:
+                     orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model_name=selected_model))
+                
+                if use_web:
+                     try:
+                        orchestrator.register_specialist("web_search_agent", WebSearchAgent())
+                     except Exception as e:
+                        st.error(f"Failed to load Web Agent: {e}")
 
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+                # Callback for Right Column Logging
+                def ui_callback(step: str, detail: str, status: str):
+                    with log_container:
+                        if status == "running":
+                            st.info(f"**{step}**: {detail}")
+                        elif status == "complete":
+                            st.success(f"✅ **{step}**: {detail}")
+                        elif status == "error":
+                            st.error(f"❌ **{step}**: {detail}")
+                
+                try:
+                    # Run research with callback
+                    final_report = orchestrator.research(prompt, callback=ui_callback)
+                    full_response = final_report
+                    message_placeholder.markdown(full_response)
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+                    full_response = f"Error: {str(e)}"
+
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 if __name__ == "__main__":
     main()
