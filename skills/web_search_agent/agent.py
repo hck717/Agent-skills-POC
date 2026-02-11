@@ -1,370 +1,326 @@
 #!/usr/bin/env python3
-"""
-Web Search Agent - Supplements Business Analyst with current web information
+""" 
+Web Search Agent ("News Desk")
 
-Uses Tavily for web search + local Ollama for synthesis
+Goal: Find unknown unknowns fast.
+Architecture: Step-Back Prompting + HyDE expansion + corrective reranking.
+
+- Step-back: broaden the question to capture macro/sector/ticker catalysts.
+- HyDE: generate a hypothetical news brief to create intent-rich search queries.
+- Filtering: dedupe + rerank (Cohere rerank optional; local LLM rerank fallback).
+
+Outputs MUST preserve SOURCE markers:
+--- SOURCE: Title (https://...) ---
 """
 
 import os
 import re
-from typing import List, Dict, Optional
+import json
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime
+
+import requests
 import ollama
 from tavily import TavilyClient
-from datetime import datetime
 
 
 class WebSearchAgent:
-    """
-    Web Search Agent that supplements document-based analysis with current web info.
-    
-    Role:
-    - Fills gaps from document analysis (e.g., current stock prices, recent news)
-    - Provides market sentiment and analyst opinions
-    - Supplements with competitor intelligence
-    
-    Always runs AFTER Business Analyst to identify what's missing.
-    """
-    
-    def __init__(self, tavily_api_key: str = None, ollama_model: str = "deepseek-r1:8b"):
+    def __init__(
+        self,
+        tavily_api_key: Optional[str] = None,
+        ollama_model: str = "deepseek-r1:8b",
+        ollama_base_url: str = "http://localhost:11434",
+        cohere_api_key: Optional[str] = None,
+    ):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         if not self.tavily_api_key:
-            raise ValueError("TAVILY_API_KEY not found. Set via environment variable or pass to constructor.")
-        
+            raise ValueError("TAVILY_API_KEY not found. Set env var or pass to constructor.")
+
         self.ollama_model = ollama_model
+        self.ollama_base_url = ollama_base_url
         self.tavily = TavilyClient(api_key=self.tavily_api_key)
-        
-        print(f"✅ Web Search Agent initialized (Model: {ollama_model})")
-    
-    def _search_web(self, query: str, max_results: int = 5) -> tuple[str, List[Dict]]:
-        """
-        Search web using Tavily and return context + citations
-        
-        Returns:
-            (context_text, citations_list)
-        """
+
+        self.cohere_api_key = cohere_api_key or os.getenv("COHERE_API_KEY")
+
+        print(f"✅ Web Search Agent initialized (News Desk, model={ollama_model})")
+
+    # -------------------------
+    # Step-back + HyDE
+    # -------------------------
+
+    def _ollama_chat(self, messages: List[Dict], temperature: float = 0.0, num_predict: int = 400) -> str:
+        # Use ollama python client but allow overriding base URL via env by setting OLLAMA_HOST externally.
+        resp = ollama.chat(
+            model=self.ollama_model,
+            messages=messages,
+            options={"temperature": temperature, "num_predict": num_predict},
+        )
+        content = resp["message"]["content"] if isinstance(resp, dict) else resp.message.content
+        return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
+    def _step_back_query(self, query: str) -> str:
+        prompt = f"""Rewrite the user question into a broader 'step-back' web-search question that helps find recent market-moving news.
+
+User question: {query}
+
+Rules:
+- Output ONE sentence.
+- Include timeframe hints like 'today', 'this week', 'recent' when relevant.
+- Avoid adding facts.
+"""
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=120)
+        return out.strip().strip('"')
+
+    def _hyde_brief(self, query: str, prior_analysis: str = "") -> str:
+        prompt = f"""Write a hypothetical (fake) news brief (6-10 sentences) that would answer the user's question well.
+This is for search expansion only.
+
+User question: {query}
+
+If provided, you may use this prior context only to infer what topics to look for (do not treat as facts):
+{prior_analysis[:600]}
+
+Output:
+- Plain text only.
+- No citations.
+- Include likely keywords: company, products, catalysts, regulation, competitors, macro.
+"""
+        return self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.2, num_predict=350)
+
+    def _hyde_queries_from_brief(self, hyde_text: str, max_queries: int = 2) -> List[str]:
+        prompt = f"""Convert the hypothetical news brief into {max_queries} concise web search queries.
+
+Brief:
+{hyde_text}
+
+Rules:
+- Output valid JSON list of strings.
+- Each query <= 12 words.
+- Include timeframe hint (2025, 2026, today, Q1 2026) when relevant.
+"""
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=200)
         try:
-            print(f"   🔍 Searching web: {query[:80]}...")
-            
-            response = self.tavily.search(
+            data = json.loads(out)
+            return [str(x) for x in data][:max_queries]
+        except Exception:
+            # Fallback: naive splitting
+            lines = [l.strip("- ") for l in out.splitlines() if l.strip()]
+            return lines[:max_queries] if lines else [hyde_text[:80]]
+
+    # -------------------------
+    # Search + merge
+    # -------------------------
+
+    def _tavily_search(self, query: str, max_results: int = 6) -> List[Dict]:
+        try:
+            resp = self.tavily.search(
                 query=query,
                 search_depth="advanced",
                 max_results=max_results,
-                include_answer=True  # Get Tavily's AI summary too
+                include_answer=False,
             )
-            
-            # Format context with SOURCE markers (matching Business Analyst format)
-            context_text = ""
-            citations = []
-            
-            for idx, result in enumerate(response.get('results', []), 1):
-                title = result.get('title', 'Unknown')
-                url = result.get('url', '')
-                content = result.get('content', '')
-                
-                # 🔥 CRITICAL: Use SOURCE marker format for consistency
-                context_text += f"\n--- SOURCE: {title} ({url}) ---\n{content}\n\n"
-                
-                citations.append({
-                    'index': idx,
-                    'title': title,
-                    'url': url,
-                    'content': content
-                })
-            
-            print(f"   ✅ Found {len(citations)} web sources")
-            return context_text, citations
-            
+            return resp.get("results", []) or []
         except Exception as e:
-            print(f"   ❌ Search error: {str(e)}")
-            return f"Search Error: {str(e)}", []
-    
-    def _inject_web_citations(self, analysis: str, citations: List[Dict]) -> str:
-        """
-        🔥 POST-PROCESSING FIX: Inject web citations if LLM didn't preserve them
-        """
-        # Check if analysis already has citations
-        if '--- SOURCE:' in analysis:
-            citation_count = analysis.count('--- SOURCE:')
-            print(f"   ✅ LLM preserved {citation_count} web citations")
-            return analysis
-        
-        print("   ⚠️ LLM didn't preserve web citations - injecting them automatically")
-        
-        if not citations:
-            print("   ❌ No citations available to inject")
-            return analysis
-        
-        print(f"   📚 Found {len(citations)} web sources to distribute")
-        
-        # Split analysis into sections/paragraphs
-        lines = analysis.split('\n')
-        result_lines = []
-        citation_idx = 0
-        
-        for i, line in enumerate(lines):
-            result_lines.append(line)
-            
-            # Add citation after substantial paragraphs (not headers, not empty lines)
-            if (line.strip() and 
-                not line.startswith('#') and 
-                len(line) > 100 and 
-                citation_idx < len(citations) and
-                i < len(lines) - 1):  # Don't add to last line
-                
-                cite = citations[citation_idx]
-                result_lines.append(f"--- SOURCE: {cite['title']} ({cite['url']}) ---")
-                print(f"   [Web Citation {citation_idx + 1}] {cite['title'][:50]}...")
-                citation_idx += 1
-        
-        injected_analysis = '\n'.join(result_lines)
-        final_count = injected_analysis.count('--- SOURCE:')
-        print(f"   ✅ Injected {final_count} web citations into analysis")
-        
-        return injected_analysis
-    
-    def _synthesize_with_llm(self, query: str, search_context: str, citations: List[Dict], prior_analysis: str = "") -> str:
-        """
-        Use local Ollama to synthesize search results
-        
-        Args:
-            query: User's original question
-            search_context: Web search results with SOURCE markers
-            citations: List of citation dictionaries
-            prior_analysis: Optional prior analysis from Business Analyst
-        """
-        
-        # Get current date for temporal context
-        current_date = datetime.now().strftime("%B %Y")
-        
-        system_prompt = f"""
-You are a Web Research Specialist for professional equity research analysis.
-Current Date: {current_date}
+            print(f"   ❌ Tavily search error: {e}")
+            return []
 
-Your Role:
-- Supplement historical 10-K data with CURRENT market developments
-- Provide recent news, analyst opinions, market sentiment from 2025-2026
-- Update with latest financial data not in SEC filings
-- Identify emerging risks or opportunities
+    def _dedupe_results(self, results: List[Dict]) -> List[Dict]:
+        seen = set()
+        out = []
+        for r in results:
+            url = (r.get("url") or "").strip()
+            key = url.lower() if url else (r.get("title") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(r)
+        return out
 
-⚠️ CRITICAL CITATION FORMAT ⚠️
+    # -------------------------
+    # Rerank (optional)
+    # -------------------------
 
-You MUST output in this EXACT format:
+    def _cohere_rerank(self, query: str, results: List[Dict], top_n: int = 6) -> List[Dict]:
+        if not self.cohere_api_key or not results:
+            return results
 
-[Your analysis paragraph - 2-4 sentences]
---- SOURCE: Article Title (https://url.com) ---
+        docs = []
+        for r in results:
+            title = r.get("title") or ""
+            content = r.get("content") or ""
+            docs.append(f"{title}\n{content}"[:1500])
 
-[Next analysis paragraph]
---- SOURCE: Article Title (https://url.com) ---
+        try:
+            payload = {
+                "model": "rerank-english-v3.0",
+                "query": query,
+                "documents": docs,
+                "top_n": min(top_n, len(docs)),
+            }
+            headers = {
+                "Authorization": f"Bearer {self.cohere_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = requests.post("https://api.cohere.com/v1/rerank", json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            order = [x["index"] for x in data.get("results", [])]
+            reranked = [results[i] for i in order if i < len(results)]
+            return reranked
+        except Exception as e:
+            print(f"   ⚠️ Cohere rerank failed, falling back to LLM rerank: {e}")
+            return results
 
-EXAMPLE OUTPUT YOU MUST FOLLOW:
+    def _llm_rerank(self, query: str, results: List[Dict], top_n: int = 6) -> List[Dict]:
+        if not results:
+            return []
 
-## Recent Market Performance (Q4 2025 - Q1 2026)
-Apple stock rose 12% in Q4 2025 following stronger-than-expected iPhone sales in China. The company reported record Services revenue of $23.1B, beating analyst estimates.
---- SOURCE: Bloomberg Markets (https://bloomberg.com/...) ---
+        # Keep short for speed
+        candidates = results[: min(len(results), 10)]
+        items = []
+        for i, r in enumerate(candidates):
+            items.append({
+                "i": i,
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": (r.get("content") or "")[:260],
+            })
 
-Analysts raised price targets to $245 average, citing strong ecosystem growth and AI integration momentum heading into 2026.
---- SOURCE: Reuters Business (https://reuters.com/...) ---
+        prompt = f"""You are a reranker for equity research news.
+Rank the following search results for answering the query.
 
-## Competitive Landscape Updates
-Samsung launched Galaxy S25 with advanced AI features in January 2026, intensifying competition in the premium smartphone segment. Early reviews highlight comparable camera quality to iPhone 15 Pro.
---- SOURCE: The Verge (https://theverge.com/...) ---
+Query: {query}
 
-RULES:
-1. Write 2-4 sentences per point
-2. Add SOURCE line immediately after EVERY point
-3. Use format: --- SOURCE: Title (URL) ---
-4. Emphasize TEMPORAL CONTEXT: "As of 2026", "Recent reports", "Q1 2026"
-5. Distinguish from historical 10-K data: "While 10-K shows... recent developments indicate..."
-6. Be SPECIFIC with dates and timeframes
-7. Focus on NEW information not in SEC filings
-8. Keep response concise (~1200 tokens max)
-
-Professional Tone:
-- Concise, factual, data-driven
-- Use specific metrics and numbers
-- Cite analyst firms, dates, percentages
-- Avoid speculation without attribution
-        """
-        
-        # Build prior analysis section
-        prior_section = ""
-        if prior_analysis:
-            # Extract key points from prior analysis (first 500 chars)
-            prior_summary = prior_analysis[:500] + "..." if len(prior_analysis) > 500 else prior_analysis
-            prior_section = f"""### PRIOR 10-K ANALYSIS (Historical Data):
-{prior_summary}
-
-### YOUR TASK: 
-Supplement the above historical analysis with CURRENT web information (2025-2026).
-Highlight what's NEW vs what's in the 10-K.
-
+Return JSON list of indices in best-first order.
+Results:
+{json.dumps(items, ensure_ascii=False)}
 """
-        
-        user_prompt = f"""### WEB SEARCH CONTEXT (Current Sources with SOURCE markers):
-{search_context}
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=120)
+        try:
+            order = json.loads(out)
+            order = [int(x) for x in order if isinstance(x, (int, float, str))]
+            seen = set()
+            reranked = []
+            for idx in order:
+                if idx in seen or idx < 0 or idx >= len(candidates):
+                    continue
+                seen.add(idx)
+                reranked.append(candidates[idx])
+            # append leftovers
+            for i in range(len(candidates)):
+                if i not in seen:
+                    reranked.append(candidates[i])
+            return reranked[:top_n]
+        except Exception:
+            return candidates[:top_n]
 
-{prior_section}### USER QUESTION:
+    # -------------------------
+    # Synthesis with citations
+    # -------------------------
+
+    def _format_context(self, results: List[Dict]) -> Tuple[str, List[Dict]]:
+        ctx = ""
+        citations = []
+        for r in results:
+            title = (r.get("title") or "Unknown").strip()
+            url = (r.get("url") or "").strip()
+            content = (r.get("content") or "").strip()
+            if not url:
+                continue
+            ctx += f"\n--- SOURCE: {title} ({url}) ---\n{content}\n"
+            citations.append({"title": title, "url": url, "content": content})
+        return ctx.strip(), citations
+
+    def _inject_citations(self, text: str, citations: List[Dict]) -> str:
+        if "--- SOURCE:" in text:
+            return text
+        if not citations:
+            return text
+
+        paras = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
+        out = []
+        ci = 0
+        for p in paras:
+            out.append(p)
+            if ci < len(citations):
+                c = citations[ci]
+                out.append(f"--- SOURCE: {c['title']} ({c['url']}) ---")
+                ci += 1
+        return "\n\n".join(out)
+
+    def _synthesize(self, query: str, context: str, citations: List[Dict], prior_analysis: str = "") -> str:
+        current_date = datetime.now().strftime("%B %d, %Y")
+        prompt = f"""You are the News Desk for an equity research team.
+Date: {current_date}
+
+Task: Identify unknown-unknowns and recent catalysts relevant to the user's question.
+
+Rules:
+- Use ONLY the provided web context.
+- Write 4-7 short paragraphs.
+- After EVERY paragraph, append exactly one SOURCE line copied from the context in the form:
+  --- SOURCE: Title (URL) ---
+- If the context is insufficient, say what is missing.
+
+USER QUESTION:
 {query}
 
-### YOUR SUPPLEMENTAL ANALYSIS:
-Provide analysis following the EXACT citation format shown above.
-Emphasize temporal context and recent developments.
-PRESERVE all SOURCE markers in your response.
-Keep response focused and concise (target ~1200 tokens).
-        """
-        
-        try:
-            print(f"   🤖 Synthesizing with {self.ollama_model}...")
-            print(f"   ⚡ Token limit: 1200 (optimized for synthesis)")
-            
-            response = ollama.chat(
-                model=self.ollama_model,
-                messages=[
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_prompt}
-                ],
-                options={
-                    'temperature': 0.0,  # 🔥 CRITICAL: Deterministic for citation preservation
-                    'num_predict': 1200  # 🔥 FIX 2: Reduced from 2500 (52% reduction)
-                }
-            )
-            
-            result = response['message']['content']
-            print(f"   ✅ Synthesis complete ({len(result)} chars)")
-            
-            # 🔥 POST-PROCESS: Inject citations if LLM failed
-            result = self._inject_web_citations(result, citations)
-            
-            return result
-            
-        except Exception as e:
-            print(f"   ❌ Synthesis error: {str(e)}")
-            # Fallback: Return raw context with citations preserved
-            return f"## Web Research\n\n{search_context}\n\n**Note**: Synthesis failed, showing raw results."
-    
+WEB CONTEXT:
+{context}
+
+PRIOR (optional, treat as background, not as facts):
+{prior_analysis[:600]}
+"""
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=900)
+        out = self._inject_citations(out, citations)
+        return out
+
+    # -------------------------
+    # Public API
+    # -------------------------
+
     def analyze(self, query: str, prior_analysis: str = "") -> str:
-        """
-        Main analysis method - searches web and synthesizes results
-        
-        Args:
-            query: User's research question
-            prior_analysis: Optional prior analysis from Business Analyst
-        
-        Returns:
-            Synthesized analysis with SOURCE markers for web citations
-        """
-        print(f"\n🌐 Web Search Agent analyzing: '{query}'")
-        
-        # Enhance query based on what's likely missing from documents
-        enhanced_query = self._enhance_query(query, prior_analysis)
-        
-        # Search web
-        search_context, citations = self._search_web(enhanced_query)
-        
+        print(f"\n🌐 News Desk analyzing: '{query}'")
+
+        step_back = self._step_back_query(query)
+        hyde = self._hyde_brief(query, prior_analysis)
+        hyde_queries = self._hyde_queries_from_brief(hyde, max_queries=2)
+
+        # Always include a time-aware direct query too
+        year = datetime.now().year
+        direct = f"{query} latest news {year}"
+
+        print(f"   🧭 Step-back: {step_back}")
+        print(f"   🧪 HyDE queries: {hyde_queries}")
+
+        all_results = []
+        for q in [direct, step_back] + hyde_queries:
+            all_results.extend(self._tavily_search(q, max_results=6))
+
+        all_results = self._dedupe_results(all_results)
+
+        # Rerank
+        ranked = self._cohere_rerank(query, all_results, top_n=8)
+        if ranked == all_results:
+            ranked = self._llm_rerank(query, all_results, top_n=8)
+
+        context, citations = self._format_context(ranked)
         if not citations:
-            return "## Web Research\n\nNo web results found. Analysis limited to document sources."
-        
-        # Synthesize with LLM
-        analysis = self._synthesize_with_llm(query, search_context, citations, prior_analysis)
-        
+            return "## Web Research\n\nNo web results found."
+
+        analysis = self._synthesize(query, context, citations, prior_analysis)
         return analysis
-    
-    def _enhance_query(self, query: str, prior_analysis: str = "") -> str:
-        """
-        Enhance query to focus on information likely missing from 10-K documents
-        
-        10-Ks are historical (6-12 months old), so focus on:
-        - Recent news (last 3 months)
-        - Current stock performance
-        - Analyst opinions
-        - Breaking developments
-        """
-        query_lower = query.lower()
-        
-        # Current date context
-        current_year = datetime.now().year
-        current_quarter = f"Q{(datetime.now().month-1)//3 + 1}"
-        
-        enhancements = []
-        
-        # Add temporal focus emphasizing CURRENT data
-        if "recent" not in query_lower and "latest" not in query_lower:
-            enhancements.append("latest")
-            enhancements.append(f"{current_quarter} {current_year}")
-        
-        # Add specific info types based on query
-        if "compet" in query_lower:
-            enhancements.append("market developments")
-            enhancements.append("analyst ratings")
-            enhancements.append("competitive moves")
-        
-        if "risk" in query_lower:
-            enhancements.append("breaking news")
-            enhancements.append("regulatory updates")
-            enhancements.append("analyst warnings")
-        
-        if "financial" in query_lower or "revenue" in query_lower or "performance" in query_lower:
-            enhancements.append("latest earnings")
-            enhancements.append("analyst estimates")
-            enhancements.append("guidance updates")
-        
-        if "product" in query_lower or "development" in query_lower:
-            enhancements.append("product launches")
-            enhancements.append("technology updates")
-            enhancements.append("innovation news")
-        
-        # Construct enhanced query with strong temporal emphasis
-        if enhancements:
-            enhanced = f"{query} {' '.join(enhancements)} {current_year}"
-        else:
-            enhanced = f"{query} latest developments {current_quarter} {current_year}"
-        
-        print(f"   📝 Enhanced query: {enhanced}")
-        return enhanced
-    
+
     def test_connection(self) -> bool:
-        """
-        Test both Tavily and Ollama connections
-        """
         try:
-            # Test Tavily
-            print("🔌 Testing Tavily API...")
             self.tavily.search(query="test", max_results=1)
-            print("   ✅ Tavily connected")
-            
-            # Test Ollama
-            print("🔌 Testing Ollama...")
-            ollama.chat(
-                model=self.ollama_model,
-                messages=[{'role': 'user', 'content': 'test'}],
-                options={'num_predict': 10}
-            )
-            print("   ✅ Ollama connected")
-            
+            ollama.chat(model=self.ollama_model, messages=[{"role": "user", "content": "test"}], options={"num_predict": 10})
             return True
-            
         except Exception as e:
-            print(f"   ❌ Connection test failed: {str(e)}")
+            print(f"❌ Connection failed: {e}")
             return False
 
 
 if __name__ == "__main__":
-    import sys
-    
-    # Quick test
-    tavily_key = os.getenv("TAVILY_API_KEY")
-    if not tavily_key:
-        print("❌ TAVILY_API_KEY not set")
-        print("\nSet it with:")
-        print("  export TAVILY_API_KEY='your-key'")
-        sys.exit(1)
-    
-    agent = WebSearchAgent(tavily_api_key=tavily_key)
-    
-    if agent.test_connection():
-        print("\n" + "="*60)
-        result = agent.analyze("What are Apple's latest competitive challenges?")
-        print("\n" + "="*60)
-        print("RESULT:")
-        print("="*60)
-        print(result)
+    agent = WebSearchAgent()
+    print(agent.analyze("Why is AAPL down today?"))
