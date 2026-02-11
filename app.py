@@ -4,7 +4,9 @@ import asyncio
 from dotenv import load_dotenv
 from orchestrator_react import ReActOrchestrator
 from skills.web_search_agent.agent import WebSearchAgent
-from skills.business_analyst_standard.agent import BusinessAnalystStandard
+# 🔥 FIX: Import the correct class name from graph_agent
+from skills.business_analyst_standard.graph_agent import BusinessAnalystGraphAgent as BusinessAnalystStandard
+
 try:
     from skills.business_analyst_crag import BusinessAnalystCRAG
 except ImportError:
@@ -27,7 +29,7 @@ def main():
     st.sidebar.header("Configuration")
     
     # Model Selection
-    model_options = ["deepseek-r1:8b", "llama3", "mistral"]
+    model_options = ["deepseek-r1:8b", "llama3", "mistral", "qwen2.5:7b"]
     selected_model = st.sidebar.selectbox("Analysis Model", model_options, index=0)
 
     # 🔐 Database Credentials (UI Overrides)
@@ -85,8 +87,7 @@ def main():
             full_response = ""
             
             # Re-initialize/Update orchestrator with current settings
-            # We initialize with the selected model
-            orchestrator = ReActOrchestrator(model=selected_model)
+            orchestrator = ReActOrchestrator() # Orchestrator uses its own models defined in class, but we could pass it if needed
             
             # Register Selected Agents with UI Credentials
             if use_crag and BusinessAnalystCRAG:
@@ -100,7 +101,8 @@ def main():
                 orchestrator.register_specialist("business_analyst_crag", crag_agent)
             
             if use_standard:
-                 orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model=selected_model))
+                 # 🔥 FIX: Pass model_name instead of model
+                 orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model_name=selected_model))
             
             if use_web:
                  try:
