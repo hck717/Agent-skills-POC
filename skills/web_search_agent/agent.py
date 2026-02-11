@@ -45,18 +45,24 @@ class WebSearchAgent:
         print(f"✅ Web Search Agent initialized (News Desk, model={ollama_model})")
 
     # -------------------------
-    # Step-back + HyDE
+    # Helper: Clean DeepSeek Output
     # -------------------------
+    def _clean_think(self, text: str) -> str:
+        """Removes <think>...</think> blocks from DeepSeek output."""
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     def _ollama_chat(self, messages: List[Dict], temperature: float = 0.0, num_predict: int = 400) -> str:
-        # Use ollama python client but allow overriding base URL via env by setting OLLAMA_HOST externally.
         resp = ollama.chat(
             model=self.ollama_model,
             messages=messages,
             options={"temperature": temperature, "num_predict": num_predict},
         )
         content = resp["message"]["content"] if isinstance(resp, dict) else resp.message.content
-        return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        return self._clean_think(content)
+
+    # -------------------------
+    # Step-back + HyDE
+    # -------------------------
 
     def _step_back_query(self, query: str) -> str:
         prompt = f"""Rewrite the user question into a broader 'step-back' web-search question that helps find recent market-moving news.
@@ -94,24 +100,39 @@ Brief:
 {hyde_text}
 
 Rules:
-- Output valid JSON list of strings.
+- Output valid JSON list of strings ONLY.
+- Example: ["Microsoft cloud revenue 2026", "Azure AI strategy risks"]
 - Each query <= 12 words.
 - Include timeframe hint (2025, 2026, today, Q1 2026) when relevant.
 """
         out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=200)
+        
+        # Robust Parsing
         try:
-            data = json.loads(out)
-            return [str(x) for x in data][:max_queries]
-        except Exception:
-            # Fallback: naive splitting
-            lines = [l.strip("- ") for l in out.splitlines() if l.strip()]
-            return lines[:max_queries] if lines else [hyde_text[:80]]
+            # 1. Try finding JSON block
+            match = re.search(r'\[.*\]', out, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                return [str(x) for x in data if isinstance(x, str)][:max_queries]
+            
+            # 2. Fallback: Split lines if JSON fails
+            lines = [l.strip().strip('- "') for l in out.splitlines() if l.strip()]
+            valid_lines = [l for l in lines if len(l) > 5 and not l.startswith('[')]
+            if valid_lines:
+                return valid_lines[:max_queries]
+            
+        except Exception as e:
+            print(f"   ⚠️ HyDE Parse Error: {e}")
+        
+        # 3. Ultimate Fallback
+        return [hyde_text[:80]] if hyde_text else []
 
     # -------------------------
     # Search + merge
     # -------------------------
 
     def _tavily_search(self, query: str, max_results: int = 6) -> List[Dict]:
+        if not query or len(query) < 3: return []
         try:
             resp = self.tavily.search(
                 query=query,
@@ -197,22 +218,26 @@ Results:
 """
         out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=120)
         try:
-            order = json.loads(out)
-            order = [int(x) for x in order if isinstance(x, (int, float, str))]
-            seen = set()
-            reranked = []
-            for idx in order:
-                if idx in seen or idx < 0 or idx >= len(candidates):
-                    continue
-                seen.add(idx)
-                reranked.append(candidates[idx])
-            # append leftovers
-            for i in range(len(candidates)):
-                if i not in seen:
-                    reranked.append(candidates[i])
-            return reranked[:top_n]
+            # Clean think tags again just in case
+            match = re.search(r'\[.*\]', out, re.DOTALL)
+            if match:
+                order = json.loads(match.group(0))
+                order = [int(x) for x in order if isinstance(x, (int, float, str))]
+                seen = set()
+                reranked = []
+                for idx in order:
+                    if idx in seen or idx < 0 or idx >= len(candidates):
+                        continue
+                    seen.add(idx)
+                    reranked.append(candidates[idx])
+                # append leftovers
+                for i in range(len(candidates)):
+                    if i not in seen:
+                        reranked.append(candidates[i])
+                return reranked[:top_n]
         except Exception:
             return candidates[:top_n]
+        return candidates[:top_n] # Fallback
 
     # -------------------------
     # Synthesis with citations
@@ -279,7 +304,7 @@ PRIOR (optional, treat as background, not as facts):
     # Public API
     # -------------------------
 
-    def analyze(self, query: str, prior_analysis: str = "") -> str:
+    def analyze(self, query: str, prior_analysis: str = "", metadata: Dict = {}) -> str:
         print(f"\n🌐 News Desk analyzing: '{query}'")
 
         step_back = self._step_back_query(query)
@@ -288,14 +313,22 @@ PRIOR (optional, treat as background, not as facts):
 
         # Always include a time-aware direct query too
         year = datetime.now().year
-        direct = f"{query} latest news {year}"
+        # Use Metadata if available
+        meta_years = metadata.get("years", [year])
+        target_year = meta_years[0] if meta_years else year
+        
+        direct = f"{query} latest news {target_year}"
 
         print(f"   🧭 Step-back: {step_back}")
         print(f"   🧪 HyDE queries: {hyde_queries}")
 
         all_results = []
-        for q in [direct, step_back] + hyde_queries:
-            all_results.extend(self._tavily_search(q, max_results=6))
+        queries_to_run = [direct, step_back] + hyde_queries
+        # Dedupe queries
+        queries_to_run = list(set([q for q in queries_to_run if q and len(q) > 3]))
+
+        for q in queries_to_run:
+            all_results.extend(self._tavily_search(q, max_results=5))
 
         all_results = self._dedupe_results(all_results)
 
