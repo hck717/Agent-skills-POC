@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.5 - Perfectionist Citation Logic (Growth Rates)
+Version: 3.6 - Automated Graph Seeding & Ticker Detection
 """
 
 import os
@@ -18,6 +18,13 @@ from enum import Enum
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
+
+# Import the seeding script
+try:
+    from scripts.seed_neo4j_ba_graph import seed
+except ImportError:
+    seed = None
+    print("⚠️ Could not import seed script. Auto-seeding disabled.")
 
 # Load environment variables
 load_dotenv()
@@ -209,6 +216,82 @@ class ReActOrchestrator:
     def test_connection(self) -> bool:
         return self.client.test_connection()
     
+    def _extract_ticker(self, user_query: str, callback: Optional[Callable] = None) -> Optional[str]:
+        """
+        Extract company ticker from user query using LLM
+        """
+        if callback:
+             callback("Pre-Processing", "Identifying target company...", "running")
+             
+        prompt = f"""
+        Identify the primary stock ticker symbol for the company mentioned in this query.
+        Return ONLY the ticker symbol (e.g., AAPL, MSFT, TSLA, NVDA).
+        If no specific public company is found, return "NONE".
+        
+        Query: "{user_query}"
+        
+        Ticker:
+        """
+        
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            response = self.client.chat(messages, temperature=0.0, num_predict=10)
+            ticker = response.strip().upper()
+            
+            # Clean up response (remove punctuation, etc)
+            ticker = re.sub(r'[^A-Z]', '', ticker)
+            
+            if ticker == "NONE" or len(ticker) < 2:
+                if callback:
+                    callback("Pre-Processing", "No specific company identified", "complete")
+                return None
+            
+            print(f"   🔍 Identified Ticker: {ticker}")
+            if callback:
+                callback("Pre-Processing", f"Identified Target: {ticker}", "complete")
+            return ticker
+            
+        except Exception as e:
+            print(f"   ⚠️ Failed to extract ticker: {e}")
+            return None
+
+    def _auto_seed_graph(self, ticker: str, callback: Optional[Callable] = None):
+        """
+        Automatically seed the Neo4j Graph DB for the identified ticker
+        """
+        if not seed:
+            return
+            
+        data_path = os.path.join("data", ticker)
+        
+        # Check if data folder exists
+        if not os.path.exists(data_path):
+             print(f"   ⚠️ No data folder found for {ticker} at ./data/{ticker}")
+             if callback:
+                 callback("Graph Seeding", f"Skipped: No data found for {ticker}", "error")
+             return
+
+        if callback:
+            callback("Graph Seeding", f"Resetting & Ingesting {ticker}...", "running")
+            
+        try:
+            # Execute Seeding (Reset = True wipes the DB first)
+            seed(
+                uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+                user=os.getenv("NEO4J_USER", "neo4j"),
+                password=os.getenv("NEO4J_PASSWORD", "password"),
+                ticker=ticker,
+                reset=True  # 🔥 CRITICAL: Wipes DB before seeding new company
+            )
+            print(f"   ✅ Successfully seeded graph for {ticker}")
+            if callback:
+                callback("Graph Seeding", f"✅ Graph Ready ({ticker})", "complete")
+                
+        except Exception as e:
+            print(f"   ❌ Seeding failed: {e}")
+            if callback:
+                callback("Graph Seeding", f"Failed: {str(e)}", "error")
+
     def _reason_rule_based(self, user_query: str, iteration: int, callback: Optional[Callable] = None) -> Action:
         """
         RULE-BASED REASONING
@@ -771,6 +854,11 @@ GENERATE 10/10 INSTITUTIONAL-GRADE REPORT NOW
         # Initial UI Update
         if callback:
             callback("Initialization", "Starting orchestration...", "running")
+            
+        # 🔥 STEP 0: AUTO-SEED GRAPH
+        ticker = self._extract_ticker(user_query, callback)
+        if ticker:
+            self._auto_seed_graph(ticker, callback)
         
         for iteration in range(1, self.max_iterations + 1):
             print("\n" + "-"*70)
