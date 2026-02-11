@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.5 - Improved Citation Formatting
+Version: 3.6 - Senior PM Persona & Dynamic Synthesis
 """
 
 import os
@@ -360,7 +360,7 @@ class ReActOrchestrator:
         meta_context = f"Focused Years: {self.current_metadata.get('years', 'All')}\nTopics: {self.current_metadata.get('topics', 'General')}"
         
         prompt = f"""
-        Role: Senior Equity Research Analyst.
+        Role: Senior Portfolio Manager at a top-tier Multi-Strategy Hedge Fund.
         Date: {datetime.now().strftime('%B %d, %Y')}
         Query: {user_query}
         Constraints: {meta_context}
@@ -369,11 +369,18 @@ class ReActOrchestrator:
         {context}
         
         TASK:
-        Write a professional Equity Research Report.
-        - Use ONLY provided context.
-        - Cite EVERY claim with [X].
-        - Section: Executive Summary, Investment Thesis, Risks, Valuation, Conclusion.
-        - Do NOT create a References section (I will add it).
+        Synthesize a high-conviction investment memo or direct answer to the query.
+        
+        GUIDELINES:
+        - **Think like a PM**: Focus on the "So What?", variant views, and what the market might be missing.
+        - **Dynamic Structure**: Adapt to the query. If it's a specific question, answer it directly. If it's broad (e.g. "Analyze MSFT"), structure by:
+          1. **The Setup**: Current market consensus vs. reality.
+          2. **The Edge/Thesis**: Key drivers the market is under/overestimating.
+          3. **The Bear Case/Risks**: What kills the trade?
+          4. **Catalyst Path**: Specific events to watch.
+        - **Tone**: Sophisticated, decisive, concise. Avoid generic corporate descriptions.
+        - **Citations**: Cite EVERY claim with [X] based on the Context.
+        - **No References Section**: Do not generate a list of references at the end (I will append it programmatically).
         """
         
         try:
