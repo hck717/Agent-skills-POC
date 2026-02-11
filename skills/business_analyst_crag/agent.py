@@ -3,57 +3,106 @@ import re
 from typing import List, Dict, Any, Optional
 from neo4j import GraphDatabase
 import requests
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 class BusinessAnalystCRAG:
     """
-    Deep Reader (v2) - Graph-Augmented Corrective RAG
-    Optimized for Speed + Quality: 
-    - Retrieval: k=3, Context Cap=6000 chars.
-    - Generation: Structured "Deep Reader" prompt for insight, not just summary.
+    Deep Reader (v3) - Fully Upgraded Architecture
+    
+    1. Retrieval: Hybrid (Graph Traversal + Vector Re-ranking)
+    2. Evaluation: Cross-Encoder Score (CRAG)
+    3. Generation: Insight-focused Prompt
     """
     
     def __init__(self, neo4j_uri, neo4j_user, neo4j_pass, llm_url="http://localhost:11434"):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_pass))
         self.llm_url = f"{llm_url}/api/chat"
         self.model = "deepseek-r1:8b"
-        self.embedder = SentenceTransformer('all-MiniLM-L6-v2') 
-        print(f"✅ Business Analyst (CRAG) initialized (Model: {self.model})")
-
-    def _get_embedding(self, text: str) -> List[float]:
-        return self.embedder.encode(text).tolist()
+        
+        # 1. Bi-Encoder for fast embedding (Simulated Vector Search if index missing)
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # 2. Cross-Encoder for High-Precision Reranking & Evaluation (The "Judge")
+        # Lightweight model, fast on CPU
+        self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        
+        print(f"✅ Business Analyst (Deep Reader v3) initialized")
+        print(f"   - Model: {self.model}")
+        print(f"   - Reranker: ms-marco-MiniLM-L-6-v2 (Loaded)")
 
     def _query_graph_rag(self, ticker: str, query_text: str, k: int = 3) -> List[str]:
-        """Hybrid Search: Vector (Chunks) + Graph (Entities)"""
-        # Simple Graph Traversal fallback (fast & robust for POC)
+        """
+        Hybrid Retrieval Strategy:
+        1. Broad Graph Traversal (Get ~20 candidates)
+        2. Semantic Reranking (Narrow to Top-k)
+        """
+        # 1. Broad Fetch (Limit 20)
         cypher = """
         MATCH (c:Company {ticker: $ticker})-[:HAS_STRATEGY|FACES_RISK|OFFERS_PRODUCT]->(n)
         WHERE toLower(n.description) CONTAINS toLower($keyword) 
            OR toLower(n.title) CONTAINS toLower($keyword)
         RETURN n.title + ": " + n.description AS context
-        LIMIT $k
+        LIMIT 20
         """
         
+        # Simple keyword extractor for the Cypher hook
         keyword = "business"
-        if "risk" in query_text.lower(): keyword = "risk"
-        elif "strategy" in query_text.lower(): keyword = "strategy"
-        elif "revenue" in query_text.lower(): keyword = "revenue"
-        elif "growth" in query_text.lower(): keyword = "growth"
+        q_lower = query_text.lower()
+        if "risk" in q_lower: keyword = "risk"
+        elif "strategy" in q_lower: keyword = "strategy"
+        elif "revenue" in q_lower: keyword = "revenue"
+        elif "growth" in q_lower: keyword = "growth"
+        elif "compet" in q_lower: keyword = "compet"
         
+        candidates = []
         with self.driver.session() as session:
-            results = session.run(cypher, ticker=ticker, keyword=keyword, k=k)
-            return [record["context"] for record in results]
+            results = session.run(cypher, ticker=ticker, keyword=keyword)
+            candidates = [record["context"] for record in results]
+            
+        if not candidates:
+            return []
+            
+        # 2. Semantic Reranking (The "Vector" simulation)
+        # Pairs of (Query, Document)
+        pairs = [[query_text, doc] for doc in candidates]
+        scores = self.reranker.predict(pairs)
+        
+        # Sort by score descending
+        scored_docs = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+        
+        # Filter logic: Keep top K, but only if score > 0.0 (sanity check)
+        top_k = [doc for doc, score in scored_docs[:k] if score > -10.0] # Logits can be negative
+        
+        return top_k
 
     def _evaluator(self, query: str, retrieved_docs: List[str]) -> str:
-        if not retrieved_docs: return "AMBIGUOUS"
-        return "CORRECT"
+        """
+        CRAG Evaluator Logic:
+        - Score the top retrieved document against the query.
+        - > 0.5: CORRECT
+        - < 0.5 or Empty: INCORRECT (Trigger Web)
+        """
+        if not retrieved_docs:
+            return "INCORRECT"
+            
+        # Check confidence of the BEST match
+        top_doc = retrieved_docs[0]
+        score = self.reranker.predict([[query, top_doc]])[0]
+        
+        print(f"   📊 CRAG Confidence Score: {score:.4f}")
+        
+        if score > 0.5:
+            return "CORRECT"
+        elif score > 0.0:
+            return "AMBIGUOUS" # In a full system, we'd rewrite query. Here we'll treat as weak correct.
+        else:
+            return "INCORRECT"
 
     def _generate(self, query: str, context: List[str]) -> str:
         joined_context = "\n".join(context)[:6000]
         
-        # Improved Prompt for "Deep Reader" Quality
         prompt = f"""
-        Role: Expert Financial Analyst specializing in 10-K interpretation.
+        Role: Expert Financial Analyst.
         Task: Extract deep insights from the provided internal data to answer the query.
         
         Query: {query}
@@ -88,13 +137,16 @@ class BusinessAnalystCRAG:
         print(f"🧠 [Deep Reader] Analyzing: {task} (Ticker: {ticker})")
         
         print(f"   🔍 [Hybrid] Searching for '{task[:50]}...' on {ticker}...")
+        # 1. Retrieval (Hybrid: Graph + Rerank)
         docs = self._query_graph_rag(ticker, task, k=3)
         
+        # 2. Evaluation (CRAG)
         status = self._evaluator(task, docs)
         print(f"   🔍 CRAG Status: {status}")
         
-        if status == "AMBIGUOUS" or not docs:
-            print("   🔄 Context ambiguous. Proceeding with warning...")
+        # 3. Decision Logic
+        if status == "INCORRECT":
+            return "CRAG_FALLBACK_REQUIRED: Insufficient internal data confidence."
             
         print("   📝 Generating Answer...")
         analysis = self._generate(task, docs)
@@ -102,8 +154,7 @@ class BusinessAnalystCRAG:
         # Format for Orchestrator
         final_output = f"{analysis}\n\n"
         for doc in docs:
-            # Clean up the source string right here for the Orchestrator
-            # "Title: Description" -> "Graph Fact: Title - Description"
+            # Clean formatting
             clean_doc = doc.replace("\n", " ").strip()
             final_output += f"--- SOURCE: GRAPH FACT: {clean_doc} (Internal Graph) ---\n"
             
