@@ -27,12 +27,13 @@ class GraphSeeder:
         
         for attempt in range(retries):
             try:
-                response = requests.post(self.ollama_url, json=payload, timeout=600)
+                # REMOVED timeout=600 to allow unlimited processing time
+                response = requests.post(self.ollama_url, json=payload) 
                 response.raise_for_status()
                 return response.json()["message"]["content"]
             except Exception as e:
                 print(f"   ⚠️ Ollama Error (Attempt {attempt+1}/{retries}): {e}")
-                time.sleep(2) # Wait before retry
+                time.sleep(2) 
         
         print("   ❌ Ollama failed after all retries.")
         return ""
@@ -43,7 +44,6 @@ class GraphSeeder:
             if file_path.endswith('.pdf'):
                 with open(file_path, 'rb') as f:
                     reader = PyPDF2.PdfReader(f)
-                    # Limit to first 5 pages to reduce load
                     for i in range(min(5, len(reader.pages))): 
                         text += reader.pages[i].extract_text() + "\n"
             else:
@@ -54,7 +54,6 @@ class GraphSeeder:
         return text
 
     def get_entities(self, text):
-        # Chunk text to avoid context overflow (Ollama 500 cause)
         chunk = text[:6000] 
         
         prompt = f"""
