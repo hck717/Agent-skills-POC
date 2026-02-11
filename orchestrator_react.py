@@ -6,13 +6,13 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 3.0 - Atomic Citation Enforced (Target: 110/100 Quality)
+Version: 3.1 - UI Callbacks for Chain of Thought Visualization
 """
 
 import os
 import json
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
@@ -210,15 +210,13 @@ class ReActOrchestrator:
     def test_connection(self) -> bool:
         return self.client.test_connection()
     
-    def _reason_rule_based(self, user_query: str, iteration: int) -> Action:
+    def _reason_rule_based(self, user_query: str, iteration: int, callback: Optional[Callable] = None) -> Action:
         """
         RULE-BASED REASONING
-        
-        Rules:
-        - Iteration 1: Call business_analyst_crag (Deep Reader)
-        - Iteration 2: Call web_search_agent (supplement with web data)
-        - Iteration 3: Finish and synthesize
         """
+        if callback:
+            callback(f"Iteration {iteration}", "Reasoning (Rule-Based)", "running")
+            
         print(f"\n🧠 [THOUGHT {iteration}] Rule-based reasoning...")
         
         query_lower = user_query.lower()
@@ -229,6 +227,9 @@ class ReActOrchestrator:
             thought = "Starting with Deep Reader (CRAG) for high-accuracy document analysis"
             self.trace.add_thought(thought, iteration)
             print(f"   💡 {thought}")
+            
+            if callback:
+                callback(f"Iteration {iteration}", f"Thought: {thought}", "running")
             
             return Action(
                 action_type=ActionType.CALL_SPECIALIST,
@@ -257,6 +258,9 @@ class ReActOrchestrator:
             self.trace.add_thought(thought, iteration)
             print(f"   💡 {thought}")
             
+            if callback:
+                callback(f"Iteration {iteration}", f"Thought: {thought}", "running")
+            
             # Get analyst's output to pass as context
             prior_output = ""
             for obs in self.trace.observations:
@@ -276,17 +280,27 @@ class ReActOrchestrator:
         self.trace.add_thought(thought, iteration)
         print(f"   💡 {thought}")
         
+        if callback:
+             callback(f"Iteration {iteration}", f"Thought: {thought}", "running")
+        
         return Action(
             action_type=ActionType.FINISH,
             reasoning="Rule 3: Sufficient analysis gathered"
         )
     
-    def _execute_action(self, action: Action) -> Observation:
+    def _execute_action(self, action: Action, callback: Optional[Callable] = None) -> Observation:
         """Execute the decided action"""
         print(f"\n⚙️ [ACTION] Executing {action.action_type.value}...")
         
         if action.action_type == ActionType.CALL_SPECIALIST:
+            if callback:
+                callback(f"Action: {action.agent_name}", f"Executing {action.agent_name}...", "running")
+            
             result = self._call_specialist(action.agent_name, action.task_description)
+            
+            if callback:
+                callback(f"Action: {action.agent_name}", f"Completed {action.agent_name}", "complete")
+            
             return Observation(
                 action=action,
                 result=result,
@@ -295,6 +309,9 @@ class ReActOrchestrator:
             )
         
         elif action.action_type == ActionType.FINISH:
+            if callback:
+                callback("Action: Finish", "Orchestration complete", "complete")
+                
             return Observation(
                 action=action,
                 result="Orchestration complete - proceeding to synthesis",
@@ -464,10 +481,13 @@ class ReActOrchestrator:
         
         return quality_score, warnings
     
-    def _synthesize(self, user_query: str) -> str:
+    def _synthesize(self, user_query: str, callback: Optional[Callable] = None) -> str:
         """
         Synthesize with HYBRID LOCAL LLM - Professional Equity Research Report (10/10 Quality)
         """
+        if callback:
+            callback("Synthesis", "Synthesizing final report...", "running")
+            
         specialist_calls = self.trace.get_specialist_calls()
         current_date = datetime.now().strftime("%B %d, %Y")
         
@@ -484,6 +504,8 @@ class ReActOrchestrator:
                 })
         
         if not specialist_outputs:
+            if callback:
+                callback("Synthesis", "No analysis to synthesize", "error")
             return "## Analysis Summary\n\nNo specialist analysis available."
         
         # Extract ALL sources (documents + web)
@@ -740,14 +762,19 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
             else:
                 print("   ✅ Perfect citation quality!")
             
+            if callback:
+                callback("Synthesis", "Synthesized final report", "complete")
+
             return final_report
             
         except Exception as e:
             print(f"   ❌ Synthesis error: {str(e)}")
+            if callback:
+                callback("Synthesis", f"Error: {str(e)}", "error")
             # Fallback
             return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
     
-    def research(self, user_query: str) -> str:
+    def research(self, user_query: str, callback: Optional[Callable] = None) -> str:
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
         print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.3")
@@ -760,15 +787,19 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         
         self.trace = ReActTrace()
         
+        # Initial UI Update
+        if callback:
+            callback("Initialization", "Starting orchestration...", "running")
+        
         for iteration in range(1, self.max_iterations + 1):
             print("\n" + "-"*70)
             print(f"ITERATION {iteration}/{self.max_iterations}")
             print("-"*70)
             
-            action = self._reason_rule_based(user_query, iteration)
+            action = self._reason_rule_based(user_query, iteration, callback)
             self.trace.add_action(action)
             
-            observation = self._execute_action(action)
+            observation = self._execute_action(action, callback)
             self.trace.add_observation(observation)
             
             obs_preview = observation.result[:150] + "..." if len(observation.result) > 150 else observation.result
@@ -782,7 +813,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         print("📝 FINAL SYNTHESIS")
         print("="*70)
         
-        final_report = self._synthesize(user_query)
+        final_report = self._synthesize(user_query, callback)
         
         print("\n" + "="*70)
         print("📈 ORCHESTRATION SUMMARY")
@@ -790,6 +821,9 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         print(f"Iterations: {len(self.trace.thoughts)}")
         print(f"Specialists: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
         print("="*70)
+        
+        if callback:
+            callback("Orchestration", "Process Complete", "complete")
         
         return final_report
     
