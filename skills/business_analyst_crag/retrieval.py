@@ -52,32 +52,26 @@ class HybridRetriever:
         }
 
     def _search_graph_deep(self, query: str, ticker: str) -> List[str]:
-        """
-        Business Analyst Logic:
-        Find Strategy/Risk nodes explicitly.
-        """
-        # Cypher: Find Strategy or Risk nodes related to the query terms
-        # This is a "Concept Search" in the graph
         cypher = """
-        MATCH (c:Company {ticker: $ticker})
-        MATCH (c)-[r:HAS_STRATEGY|FACES_RISK|HAS_SEGMENT]->(n)
-        WHERE toLower(n.description) CONTAINS toLower($query_term)
-        RETURN type(r) as relation, n.description as description, labels(n) as type
-        LIMIT 5
+        MATCH (c:Company {ticker: $ticker})-[r]->(n)
+        WITH type(r) AS relation, labels(n) AS labels, properties(n) AS props
+        RETURN relation, labels, props
+        LIMIT 15
         """
-        
         results = []
-        # Simple keyword extraction from query for graph matching
-        # In prod, use an LLM to extract "Entities" from query
-        query_term = query.split()[0] if query else "" 
-        
         with self.neo4j.session() as session:
-            result = session.run(cypher, ticker=ticker, query_term=query_term)
-            for record in result:
-                rel = record["relation"]
-                desc = record["description"]
-                # Safety check for type list
-                node_type = record["type"][0] if record["type"] else "Concept"
-                results.append(f"GRAPH FACT: {ticker} {rel} {node_type} -> '{desc}'")
-                
+            rows = session.run(cypher, ticker=ticker)
+            for row in rows:
+                rel = row["relation"]
+                labels = row["labels"] or []
+                props = row["props"] or {}
+
+                # Prefer readable fields if present; otherwise show keys
+                text = (
+                    props.get("description")
+                    or props.get("title")
+                    or props.get("name")
+                    or str(props)
+                )
+                results.append(f"GRAPH FACT: {ticker} -[{rel}]-> {labels} :: {text}")
         return results
