@@ -46,7 +46,7 @@ class BusinessAnalystCRAG:
         self.tavily = tavily_client
 
     def analyze(self, query: str, ticker: str = "AAPL", prior_analysis: str = "") -> str:
-        print(f"🧠 [Deep Reader] Analyzing: {query}")
+        print(f"🧠 [Deep Reader] Analyzing: {query} (Ticker: {ticker})")
         
         # 1. Retrieval
         retrieval_result = self.retriever.search(query, ticker)
@@ -82,7 +82,10 @@ class BusinessAnalystCRAG:
                 else:
                      final_context = [str(web_results)]
             else:
-                return "Insufficient data in 10-K/Graph to answer this query, and Web Search is disabled."
+                # Instead of returning error, try to answer with what we have if it's not empty, 
+                # otherwise return the error message.
+                if not final_context:
+                    return "Insufficient data in 10-K/Graph to answer this query, and Web Search is disabled."
                 
         elif status == "AMBIGUOUS":
             print("   🔄 Context ambiguous. Proceeding with warning...")
@@ -97,11 +100,15 @@ class BusinessAnalystCRAG:
         You are a Senior Business Analyst (strategy + operating model + risk).
         Use ONLY the VERIFIED CONTEXT below. If a fact/number is not present, say: "Not in provided context."
 
-        CITATION FORMAT (MANDATORY):
-        After every paragraph, output exactly one citation line copied from context:
-        --- SOURCE: <filename> (Page <X>) ---
-        If you used a graph fact, cite:
-        --- SOURCE: Neo4j (local graph) ---
+        CITATION RULE (STRICT):
+        After every paragraph, you MUST append a source tag.
+        Format: --- SOURCE: <Short_Filename_OR_Graph_Label> ---
+        
+        Examples:
+        - Correct: ...revenue grew 5%. --- SOURCE: 10k.pdf ---
+        - Correct: ...strategic risk is AI. --- SOURCE: Knowledge Graph ---
+        - WRONG: --- SOURCE: 10k.pdf (Page 5) because... --- (Too long)
+        - WRONG: --- SOURCE: MSFT -[HAS_STRATEGY]-> ... --- (Too messy)
 
         VERIFIED CONTEXT:
         {context_str}
