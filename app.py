@@ -6,6 +6,7 @@ from orchestrator_react import ReActOrchestrator
 from skills.web_search_agent.agent import WebSearchAgent
 # 🔥 FIX: Import the correct class name from graph_agent
 from skills.business_analyst_standard.graph_agent import BusinessAnalystGraphAgent as BusinessAnalystStandard
+from scripts.seed_neo4j_ba_graph import seed
 
 try:
     from skills.business_analyst_crag import BusinessAnalystCRAG
@@ -54,11 +55,50 @@ def main():
             value=os.getenv("NEO4J_URI", "bolt://localhost:7687")
         )
         
+        neo4j_user = st.text_input(
+            "Neo4j User",
+            value=os.getenv("NEO4J_USER", "neo4j")
+        )
+        
         neo4j_pass = st.text_input(
             "Neo4j Password", 
             value=os.getenv("NEO4J_PASSWORD", ""),
             type="password"
         )
+
+    # Data Management
+    with st.sidebar.expander("💾 Data Management", expanded=False):
+        st.caption("Manage Local Knowledge Graph")
+        if st.button("🌱 Seed Graph DB (All Data)"):
+            data_dir = "./data"
+            if os.path.exists(data_dir):
+                tickers = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d)) and not d.startswith('.')]
+                
+                if not tickers:
+                     st.sidebar.warning("No ticker folders found in ./data")
+                else:
+                    progress_bar = st.sidebar.progress(0)
+                    status_text = st.sidebar.empty()
+                    
+                    for i, ticker in enumerate(tickers):
+                        status_text.text(f"Seeding {ticker}...")
+                        try:
+                            seed(
+                                uri=neo4j_uri,
+                                user=neo4j_user,
+                                password=neo4j_pass if neo4j_pass else "password",
+                                ticker=ticker,
+                                reset=True
+                            )
+                        except Exception as e:
+                            st.sidebar.error(f"Failed to seed {ticker}: {e}")
+                        
+                        progress_bar.progress((i + 1) / len(tickers))
+                    
+                    status_text.text("✅ Seeding Complete!")
+                    st.sidebar.success(f"Seeded {len(tickers)} tickers to Neo4j")
+            else:
+                st.sidebar.error("Data directory not found")
 
     # Agent Selection
     st.sidebar.subheader("Active Agents")
@@ -96,6 +136,7 @@ def main():
                     qdrant_url=qdrant_url if qdrant_url else None,
                     qdrant_key=qdrant_key if qdrant_key else None,
                     neo4j_uri=neo4j_uri,
+                    neo4j_user=neo4j_user,
                     neo4j_pass=neo4j_pass
                 )
                 orchestrator.register_specialist("business_analyst_crag", crag_agent)
