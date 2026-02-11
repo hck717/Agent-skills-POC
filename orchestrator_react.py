@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 2.5 - Stricter Sentence-Level Citations
+Version: 2.6 - Fixed Missing Methods (research/trace_summary)
 """
 
 import os
@@ -741,3 +741,108 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
             print(f"   ❌ Synthesis error: {str(e)}")
             # Fallback
             return f"""## Research Report\n\n{outputs_text}\n\n---\n\n## Sources\n\n{references_list.replace('[SOURCE-', '[').replace('] =', ']')}\n\n---\n\n**Note**: Synthesis failed. Showing raw analysis."""
+    
+    def research(self, user_query: str) -> str:
+        """Main ReAct loop with rule-based reasoning"""
+        print("\n" + "="*70)
+        print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.3")
+        print("   10/10 Quality + Performance (Hybrid: DeepSeek + Qwen)")
+        print("   Enhanced with CRAG Deep Reader")
+        print("="*70)
+        print(f"\n📥 Query: {user_query}")
+        print(f"🔄 Max Iterations: {self.max_iterations}")
+        print(f"📊 Registered Agents: {', '.join(self.specialist_agents.keys()) if self.specialist_agents else 'None'}")
+        
+        self.trace = ReActTrace()
+        
+        for iteration in range(1, self.max_iterations + 1):
+            print("\n" + "-"*70)
+            print(f"ITERATION {iteration}/{self.max_iterations}")
+            print("-"*70)
+            
+            action = self._reason_rule_based(user_query, iteration)
+            self.trace.add_action(action)
+            
+            observation = self._execute_action(action)
+            self.trace.add_observation(observation)
+            
+            obs_preview = observation.result[:150] + "..." if len(observation.result) > 150 else observation.result
+            print(f"\n👁️ [OBSERVATION] {obs_preview}")
+            
+            if action.action_type == ActionType.FINISH:
+                print(f"\n🎯 Loop ending at iteration {iteration}")
+                break
+        
+        print("\n" + "="*70)
+        print("📝 FINAL SYNTHESIS")
+        print("="*70)
+        
+        final_report = self._synthesize(user_query)
+        
+        print("\n" + "="*70)
+        print("📈 ORCHESTRATION SUMMARY")
+        print("="*70)
+        print(f"Iterations: {len(self.trace.thoughts)}")
+        print(f"Specialists: {', '.join(self.trace.get_specialist_calls()) or 'None'}")
+        print("="*70)
+        
+        return final_report
+    
+    def get_trace_summary(self) -> str:
+        return self.trace.get_history_summary()
+
+
+def main():
+    try:
+        orchestrator = ReActOrchestrator(max_iterations=3)
+        
+        if not orchestrator.test_connection():
+            print("\n❌ Failed to connect to Ollama")
+            print("\n💡 Make sure Ollama is running: ollama serve")
+            print("💡 Make sure models are installed:")
+            print(f"   ollama pull {ReActOrchestrator.ANALYSIS_MODEL}")
+            print(f"   ollama pull {ReActOrchestrator.SYNTHESIS_MODEL}")
+            return
+    except ValueError as e:
+        print(f"❌ {str(e)}")
+        return
+    
+    print("\n🚀 Professional Equity Research Orchestrator v2.3 Ready")
+    print("   10/10 Quality Standard (Hybrid: DeepSeek-R1 8B + Qwen 2.5 7B)")
+    print("\n🎯 Model Strategy:")
+    print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
+    print(f"   - Synthesis: {ReActOrchestrator.SYNTHESIS_MODEL} (final report combining)")
+    print("\n💡 Performance Optimizations:")
+    print("   - Business Analyst: 2000 token limit")
+    print("   - Web Search: 1200 token limit")
+    print("   - Synthesis timeout: 240s (4 minutes)")
+    print("\nAvailable agents:")
+    for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
+        status = "✅" if name in orchestrator.specialist_agents else "⏳"
+        print(f"  {status} {name}")
+    
+    while True:
+        print("\n" + "="*70)
+        user_query = input("\n💬 Research question (or 'quit'): ")
+        
+        if user_query.lower() in ['quit', 'exit', 'q']:
+            print("\n👋 Goodbye!")
+            break
+        
+        if not user_query.strip():
+            continue
+        
+        try:
+            final_report = orchestrator.research(user_query)
+            print("\n" + "="*70)
+            print("📄 FINAL REPORT")
+            print("="*70)
+            print(f"\n{final_report}\n")
+        except Exception as e:
+            print(f"\n❌ Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
