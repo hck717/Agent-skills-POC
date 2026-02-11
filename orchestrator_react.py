@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 3.1 - UI Callbacks for Chain of Thought Visualization
+Version: 3.2 - Simplified "Source Name Only" Citations for Graph/Docs
 """
 
 import os
@@ -363,6 +363,10 @@ class ReActOrchestrator:
     def _extract_document_sources(self, specialist_outputs: List[Dict]) -> Dict[int, str]:
         """
         Extract BOTH document and web sources from specialist outputs
+        
+        🔥 UPDATED LOGIC:
+        - Document/Graph sources: Just use the filename/entity name. NO page numbers required.
+        - Web sources: Title + URL (unchanged)
         """
         document_sources = {}
         citation_num = 1
@@ -373,6 +377,7 @@ class ReActOrchestrator:
             
             # Pattern 1: Document sources (filename + page)
             # Matches: --- SOURCE: 10k.pdf (Page 55) ---
+            # 🔥 CHANGE: We capture it, but we strip the page number for the final citation key
             pattern_doc = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
             doc_sources = re.findall(pattern_doc, content, re.IGNORECASE)
             
@@ -390,37 +395,38 @@ class ReActOrchestrator:
             
             total_sources = len(doc_sources) + len(web_sources) + len(generic_sources)
             print(f"   🔍 DEBUG: Found {total_sources} SOURCE markers in {agent} output")
-            print(f"      - Document sources: {len(doc_sources)}")
-            print(f"      - Web sources: {len(web_sources)}")
-            print(f"      - Generic/Graph sources: {len(generic_sources)}")
             
-            # Add document sources
+            # Add document sources (Simplified: Just filename)
             for filename, page in doc_sources:
                 filename = filename.strip()
-                page = page.strip()
-                source_key = f"{filename} - Page {page}"
+                # page = page.strip() # We ignore page for unique key now
+                
+                # 🔥 SIMPLIFIED: Just use filename as source
+                source_key = filename
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
                     print(f"      [{citation_num}] {source_key}")
                     citation_num += 1
             
-            # Add web sources
+            # Add web sources (Unchanged)
             for title, url in web_sources:
                 title = title.strip()
                 url = url.strip()
-                source_key = f"{title}||{url}"  # Use || as separator for clean splitting later
+                source_key = f"{title}||{url}"
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
                     print(f"      [{citation_num}] {title[:60]}...")
                     citation_num += 1
             
-            # Add generic/graph sources
+            # Add generic/graph sources (Simplified: Just Name)
             for name, context in generic_sources:
                 name = name.strip()
-                context = context.strip()
-                source_key = f"{name} ({context})"
+                # context = context.strip() # Ignore context for unique key
+                
+                # 🔥 SIMPLIFIED: Just use name
+                source_key = name
                 
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
@@ -528,8 +534,8 @@ class ReActOrchestrator:
                 page_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---', full_match, re.IGNORECASE)
                 if page_match:
                     filename = page_match.group(1).strip()
-                    page = page_match.group(2).strip()
-                    source_key = f"{filename} - Page {page}"
+                    # page = page_match.group(2).strip() # Ignored
+                    source_key = filename
                 else:
                     # Check if it matches Web pattern
                     web_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\((https?://[^\)]+)\)\s*---', full_match, re.IGNORECASE)
@@ -542,8 +548,8 @@ class ReActOrchestrator:
                         gen_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\((?!Page|https?://)([^\)]+)\)\s*---', full_match, re.IGNORECASE)
                         if gen_match:
                             name = gen_match.group(1).strip()
-                            context = gen_match.group(2).strip()
-                            source_key = f"{name} ({context})"
+                            # context = gen_match.group(2).strip() # Ignored
+                            source_key = name
                 
                 if source_key:
                     for num, doc in document_sources.items():
