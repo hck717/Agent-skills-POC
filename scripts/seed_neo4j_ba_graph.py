@@ -5,6 +5,8 @@ from datetime import datetime
 from neo4j import GraphDatabase
 import PyPDF2  # Ensure you have pypdf installed
 import requests
+import re
+import json
 
 # Import Semantic Chunker
 # Note: In a real deployment, we'd import this from the skills module.
@@ -15,7 +17,28 @@ try:
     HAS_SEMANTIC_CHUNKER = True
 except ImportError:
     HAS_SEMANTIC_CHUNKER = False
-    print("⚠️ Semantic Chunker import failed. Falling back to basic chunking.")
+    
+    # Define a local fallback if import fails (so we can still run)
+    class OllamaClient:
+        def __init__(self, base_url="http://localhost:11434", model="deepseek-r1:8b"):
+            self.base_url = base_url
+            self.model = model
+        
+        def chat(self, messages, temperature=0.2, num_predict=4000):
+            url = f"{self.base_url}/api/chat"
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": temperature, "num_predict": num_predict}
+            }
+            try:
+                response = requests.post(url, json=payload, timeout=600)
+                response.raise_for_status()
+                return response.json()["message"]["content"]
+            except Exception as e:
+                print(f"Ollama Error: {e}")
+                return ""
 
 class GraphSeeder:
     def __init__(self, uri, user, password, ticker):
@@ -23,12 +46,8 @@ class GraphSeeder:
         self.ticker = ticker
         self.data_dir = os.path.join("data", ticker)
         
-        # Initialize Ollama for semantic chunking if available
-        if HAS_SEMANTIC_CHUNKER:
-            self.ollama_client = OllamaClient(base_url="http://localhost:11434", model="deepseek-r1:8b")
-            self.chunker = SemanticChunker(self.ollama_client)
-        else:
-            self.chunker = None
+        # Always use our local client for this script to ensure configuration
+        self.ollama_client = OllamaClient(base_url="http://localhost:11434", model="deepseek-r1:8b")
 
     def extract_text_from_pdf(self, pdf_path):
         """Extract text content from a PDF file."""
@@ -36,8 +55,11 @@ class GraphSeeder:
         try:
             with open(pdf_path, 'rb') as f:
                 reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
+                # Read first 10 pages for Seed (sufficient for Strategy/Risk/Biz Overview)
+                # Reading whole 100+ page 10K takes too long for a demo seed
+                limit = min(15, len(reader.pages))
+                for i in range(limit): 
+                    text += reader.pages[i].extract_text() + "\n"
         except Exception as e:
             print(f"❌ Error reading {pdf_path}: {e}")
         return text
@@ -58,51 +80,51 @@ class GraphSeeder:
         Use LLM to extract structured entities (Strategy, Risk, Segment) 
         from the raw text chunk.
         """
-        if not HAS_SEMANTIC_CHUNKER:
-            return [] # Fallback skipped for brevity
-            
-        # Limit text length for extraction prompt to avoid context overflow
-        # In a real system, we'd iterate over chunks. 
-        # Here we take the first 4000 chars as a representative sample for the POC seed.
-        sample_text = text[:8000] 
+        # Limit text length to avoid context overflow for the extraction model
+        sample_text = text[:12000] 
         
+        # 🔥 SIMPLIFIED PROMPT FOR DEEPSEEK-R1
+        # Removing complex JSON schema instructions that confuse "Thinking" models.
         prompt = f"""
-        Extract key business entities from the following text (e.g. from a 10-K).
-        Return a valid JSON list of objects.
+        Analyze this 10-K text for {self.ticker}.
+        Extract 5-10 key business entities (Strategies, Risks, Segments).
         
-        Entities to extract:
-        1. STRATEGY (e.g., "AI Expansion", "Services Growth")
-        2. RISK (e.g., "Supply Chain", "Antitrust")
-        3. SEGMENT (e.g., "iPhone", "Azure")
-        
-        TEXT:
+        TEXT SAMPLE:
         {sample_text}
         
-        OUTPUT FORMAT (Strict JSON):
+        INSTRUCTIONS:
+        Return a valid JSON list. 
+        Do not include any 'thinking' text or markdown blocks outside the JSON.
+        
+        FORMAT:
         [
-            {{"type": "Strategy", "title": "...", "description": "..."}},
-            {{"type": "Risk", "title": "...", "description": "..."}},
-            {{"type": "Segment", "title": "...", "description": "..."}}
+            {{"type": "Strategy", "title": "AI Expansion", "description": "Investing in generative AI..."}},
+            {{"type": "Risk", "title": "Supply Chain", "description": "Dependence on China..."}},
+            {{"type": "Segment", "title": "Services", "description": "App Store and Cloud growth..."}}
         ]
         """
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            response = self.ollama_client.chat(messages, temperature=0.1, num_predict=2000)
+            response = self.ollama_client.chat(messages, temperature=0.1)
             
-            # Clean JSON
-            json_str = response.strip()
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0]
-            elif "```" in json_str:
-                json_str = json_str.split("```")[1].split("```")[0]
+            # 🔥 CLEANING: Remove <think> tags
+            clean_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+            
+            # Extract JSON block
+            if "```json" in clean_response:
+                json_str = clean_response.split("```json")[1].split("```")[0]
+            elif "```" in clean_response:
+                json_str = clean_response.split("```")[1].split("```")[0]
+            else:
+                json_str = clean_response
                 
-            import json
             entities = json.loads(json_str)
             return entities
             
         except Exception as e:
             print(f"⚠️ Extraction failed: {e}")
+            # print(f"DEBUG Response: {response[:200]}...")
             return []
 
     def seed(self, reset=False):
@@ -145,6 +167,7 @@ class GraphSeeder:
                         text = f.read()
                 
                 if not text:
+                    print("   ⚠️ No text extracted.")
                     continue
 
                 # AI Extraction
