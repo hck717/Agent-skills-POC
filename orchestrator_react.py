@@ -3,10 +3,10 @@
 ReAct-based Multi-Agent Orchestrator
 
 Rule-based orchestration with HYBRID LOCAL LLM synthesis:
-- DeepSeek-R1 8B: Deep reasoning for specialist analysis
-- Qwen 2.5 7B: Fast synthesis for final report combining
+- DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
+- Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.2 - Simplified "Source Name Only" Citations for Graph/Docs
+Version: 3.3 - DeepSeek Synthesis + Strict Atomic Citation Enforcement
 """
 
 import os
@@ -103,7 +103,7 @@ class OllamaClient:
         self.base_url = base_url
         self.model = model
     
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.2, num_predict: int = 3500, timeout: int = 300) -> str:
+    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.2, num_predict: int = 4000, timeout: int = 600) -> str:
         """Send chat request to Ollama API"""
         url = f"{self.base_url}/api/chat"
         
@@ -142,9 +142,10 @@ class OllamaClient:
 class ReActOrchestrator:
     """Rule-based orchestrator with HYBRID LOCAL synthesis (no web interference)"""
     
-    # 🔥 HYBRID MODEL STRATEGY
+    # 🔥 HYBRID MODEL STRATEGY - UPDATED
     ANALYSIS_MODEL = "deepseek-r1:8b"   # Deep reasoning for specialist analysis
-    SYNTHESIS_MODEL = "qwen2.5:7b"      # Fast synthesis for final report combining
+    # 🔥 UPDATED: Use DeepSeek for synthesis too (slower but strict logic follower)
+    SYNTHESIS_MODEL = "deepseek-r1:8b" 
     
     SPECIALIST_AGENTS = {
         "business_analyst_crag": {
@@ -180,7 +181,7 @@ class ReActOrchestrator:
     }
     
     def __init__(self, ollama_url: str = "http://localhost:11434", max_iterations: int = 3):
-        # Use DeepSeek for orchestrator reasoning (not used in rule-based, but kept for compatibility)
+        # Use DeepSeek for orchestrator reasoning
         self.client = OllamaClient(base_url=ollama_url, model=self.ANALYSIS_MODEL)
         self.ollama_url = ollama_url
         self.max_iterations = max_iterations
@@ -191,11 +192,10 @@ class ReActOrchestrator:
         if BusinessAnalystCRAG:
             try:
                 # 🔥 REAL CONFIG: Qdrant Cloud + Local Neo4j
-                # In production, these should come from os.getenv()
                 self.register_specialist("business_analyst_crag", BusinessAnalystCRAG(
-                    qdrant_url=os.getenv("QDRANT_URL", None), # "https://xyz.qdrant.io"
+                    qdrant_url=os.getenv("QDRANT_URL", None),
                     qdrant_key=os.getenv("QDRANT_API_KEY", None),
-                    neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"), # Local Docker
+                    neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
                     neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
                     neo4j_pass=os.getenv("NEO4J_PASSWORD", "password")
                 ))
@@ -497,7 +497,7 @@ class ReActOrchestrator:
         specialist_calls = self.trace.get_specialist_calls()
         current_date = datetime.now().strftime("%B %d, %Y")
         
-        print(f"\n📊 [SYNTHESIS] Combining insights with Qwen 2.5 7B (fast synthesis)...")
+        print(f"\n📊 [SYNTHESIS] Combining insights with DeepSeek R1 (Deep Reasoning)...")
         print(f"   Specialists called: {', '.join(specialist_calls) if specialist_calls else 'None'}")
         
         specialist_outputs = []
@@ -558,8 +558,7 @@ class ReActOrchestrator:
                 
                 return match.group(0)
             
-            # Replace all patterns in one go if possible, or iterative
-            # We use a broad pattern to catch the marker, then refine inside the callback
+            # Replace all patterns in one go
             content_with_cites = re.sub(
                 r'---\s*SOURCE:\s*(.*?)\s*---',
                 replace_source,
@@ -610,41 +609,27 @@ PROFESSIONAL REPORT STRUCTURE (MANDATORY)
 ## Investment Thesis
 [3-4 SPECIFIC bullet points - EVERY point MUST have data + citations]
 
-EXAMPLE FORMAT (FOLLOW THIS):
-- **Revenue Growth Trajectory**: FY2025 revenue of $394B [1] with Q1 2026 showing 8.2% YoY growth [8], driven by Services segment margin expansion from 68.2% [2] to 71.5% per recent results [9]
-- **Product Innovation Pipeline**: iPhone 15 launched [3], Vision Pro AR platform generating $2.1B initial quarter [10], foldable iPhone pipeline for H2 2026 [11] maintains competitive differentiation
-- **Market Leadership**: Global smartphone market share of 23.4% [4], iOS ecosystem with 2.2B active devices [5], Services ARR growth of 15.8% YoY [9]
-- **Valuation Context**: Trading at 27.5x NTM P/E [12] vs sector average of 22.1x, justified by 12.3% revenue CAGR and 43.8% gross margins [1]
-
 ## Business Overview (Historical Context - Per FY2025 10-K)
 [Cite EVERY financial metric, business line, and market position claim]
 - Revenue streams with exact figures and percentages [cite]
 - Market position with specific market share data [cite]
-- Competitive advantages with supporting evidence [cite]
 
 ## Recent Developments (Current Period - Q4 2025 to Q1 2026)
 [Cite EVERY product launch, financial update, and market development]
 - Product launches with dates and specifications [cite web sources]
 - Financial performance vs analyst expectations [cite web sources]
-- Competitive dynamics and market share shifts [cite web sources]
-- Management commentary and guidance updates [cite web sources]
 
 ## Risk Analysis
 ### Historical Risks (Per 10-K)
 [List 3-5 risks, EACH with citation]
-- Risk 1: [Specific risk with impact quantification] [cite]
-- Risk 2: [Specific risk with impact quantification] [cite]
-
 ### Emerging Risks (Current)
 [List 2-4 new risks, EACH with citation]
-- New risk 1: [Specific development] [cite web]
-- New risk 2: [Specific development] [cite web]
 
-## Valuation Context
-[EVERY metric MUST be cited]
-- Historical metrics: Revenue $XXB [cite], EBITDA margin XX% [cite], FCF $XXB [cite]
-- Current valuation: P/E XX.Xx [cite], EV/Sales X.Xx [cite], Market cap $X.XTn [cite]
-- Analyst consensus: Average price target $XXX [cite], High/Low range [cite]
+## Valuation Context (BULLET POINTS ONLY)
+[STRICT FORMAT: Use a bulleted list. Do NOT use paragraphs for valuation.]
+- **Historical Metrics**: Revenue $XXB [cite], EBITDA margin XX% [cite], FCF $XXB [cite]
+- **Current Valuation**: P/E XX.Xx [cite], EV/Sales X.Xx [cite], Market cap $X.XTn [cite]
+- **Analyst Consensus**: Average price target $XXX [cite], High/Low range [cite]
 
 ## Conclusion
 [2-3 sentences synthesizing risk-return profile with citations]
@@ -667,9 +652,10 @@ EXAMPLE FORMAT (FOLLOW THIS):
    - ❌ BAD: "Revenue was $10B, margin 20%, and growth 5% [1]." (Grouped citation)
    - ✅ GOOD: "Revenue was $10B [1], margin 20% [1], and growth 5% [1]." (Atomic citation)
 
-2. **LISTS OF DATA**
-   - ❌ BAD: "P/E 20x, EV/Sales 5x, Market Cap $1T [2]"
-   - ✅ GOOD: "P/E 20x [2], EV/Sales 5x [2], Market Cap $1T [2]"
+2. **VALUATION SECTION RULE**
+   - MUST be a bulleted list.
+   - ❌ BAD: Writing valuation as a paragraph.
+   - ✅ GOOD: Bullet points with one citation per metric.
 
 3. **SENTENCE-LEVEL CITATION**
    - Do NOT group citations at the end of a paragraph. Cite immediately after the fact.
@@ -680,58 +666,36 @@ EXAMPLE FORMAT (FOLLOW THIS):
    - ✅ "Market cap of $2.4T [9]."
    - ❌ "Market cap of $2.4T." (NO CITATION = UNACCEPTABLE)
 
-5. **TEMPORAL MARKERS (MANDATORY)**
-   - 10-K: "Per FY2025 10-K [1]" or "As disclosed in annual filing [2]"
-   - Web: "As of Q1 2026 [8]" or "Recent reports indicate [9]" or "Per January 2026 analyst note [10]"
-
-6. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
-   - Each bullet point needs 2-3 citations minimum
-   - Mix historical [1-7] and current [8+] sources
-
-7. **FORMAT**
+5. **FORMAT**
    - Replace [SOURCE-X] with [X]
    - Space before citation: "text [1]" not "text[1]"
-   - Multiple citations: "text [1][2][3]" not "text [1,2,3]"
 
-8. **PROFESSIONAL TONE**
-   - Exact figures: "15.23%" not "around 15%" or "approximately 15%"
-   - Attribution: "Goldman Sachs (January 2026) projects [X]" not "analysts think"
-   - Objectivity: "Data indicates" not "we believe" or "I think"
-   - Temporal precision: "Q1 2026" not "recently" or "soon"
-
-==========================================================================
-⚠️ QUALITY CONTROL - YOUR REPORT WILL BE REJECTED IF:
-==========================================================================
-- Any metric lacks citation
-- Investment Thesis has < 8 citations
-- Any sentence with data lacks citation
-- Generic statements without specific data
-- Temporal markers missing
-- Web sources not distinguished from 10-K sources
+6. **THINKING PROCESS**
+   - If you need to think, do it internally. Output ONLY the final report.
 
 ==========================================================================
 GENERATE 10/10 INSTITUTIONAL-GRADE REPORT NOW
 ==========================================================================
-
-Provide a report meeting EVERY requirement above.
-Cite OBSESSIVELY. Every claim, every number, every statement.
 """
         
         try:
-            # 🔥 HYBRID: Use Qwen 2.5 7B for fast synthesis (10x faster than DeepSeek)
+            # 🔥 HYBRID: Use DeepSeek for synthesis (Switched from Qwen)
             synthesis_client = OllamaClient(base_url=self.ollama_url, model=self.SYNTHESIS_MODEL)
             
             messages = [{"role": "user", "content": prompt}]
-            print("   🔄 Generating 10/10 professional equity research synthesis...")
+            print("   🔄 Generating 10/10 professional equity research synthesis (DeepSeek R1)...")
             
-            # 🔥 Qwen 2.5 7B optimized parameters (faster than DeepSeek)
-            final_report = synthesis_client.chat(
+            # 🔥 Increased timeout for DeepSeek thinking
+            raw_response = synthesis_client.chat(
                 messages, 
-                # 🔥 FIX: Increased temperature to 0.2 to help with instruction following (too low = rigid)
-                temperature=0.2,
-                num_predict=3500,  # Same token count
-                timeout=600        # 🔥 FIX 3: Increased from 240s to 600s (10 minutes)
+                temperature=0.3,
+                num_predict=5000, 
+                timeout=900
             )
+            
+            # 🔥 CLEANING: Remove <think> tags if present (DeepSeek specific)
+            final_report = re.sub(r'<think>.*?</think>', '', raw_response, flags=re.DOTALL).strip()
+            
             print("   ✅ Synthesis complete")
             
             # 🔥 POST-PROCESSING: Clean up [SOURCE-X] to [X]
@@ -784,7 +748,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
         """Main ReAct loop with rule-based reasoning"""
         print("\n" + "="*70)
         print("🔁 REACT EQUITY RESEARCH ORCHESTRATOR v2.3")
-        print("   10/10 Quality + Performance (Hybrid: DeepSeek + Qwen)")
+        print("   10/10 Quality Standard (DeepSeek-R1 8B End-to-End)")
         print("   Enhanced with CRAG Deep Reader")
         print("="*70)
         print(f"\n📥 Query: {user_query}")
@@ -846,21 +810,19 @@ def main():
             print("\n💡 Make sure Ollama is running: ollama serve")
             print("💡 Make sure models are installed:")
             print(f"   ollama pull {ReActOrchestrator.ANALYSIS_MODEL}")
-            print(f"   ollama pull {ReActOrchestrator.SYNTHESIS_MODEL}")
             return
     except ValueError as e:
         print(f"❌ {str(e)}")
         return
     
     print("\n🚀 Professional Equity Research Orchestrator v2.3 Ready")
-    print("   10/10 Quality Standard (Hybrid: DeepSeek-R1 8B + Qwen 2.5 7B)")
+    print("   10/10 Quality Standard (DeepSeek-R1 8B End-to-End)")
     print("\n🎯 Model Strategy:")
-    print(f"   - Analysis: {ReActOrchestrator.ANALYSIS_MODEL} (specialists use this)")
-    print(f"   - Synthesis: {ReActOrchestrator.SYNTHESIS_MODEL} (final report combining)")
+    print(f"   - Analysis & Synthesis: {ReActOrchestrator.ANALYSIS_MODEL}")
     print("\n💡 Performance Optimizations:")
     print("   - Business Analyst: 2000 token limit")
     print("   - Web Search: 1200 token limit")
-    print("   - Synthesis timeout: 240s (4 minutes)")
+    print("   - Synthesis timeout: 600s (10 minutes)")
     print("\nAvailable agents:")
     for name in ReActOrchestrator.SPECIALIST_AGENTS.keys():
         status = "✅" if name in orchestrator.specialist_agents else "⏳"
