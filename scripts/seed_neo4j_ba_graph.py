@@ -1,6 +1,7 @@
 import os
 import argparse
 import glob
+import time
 from datetime import datetime
 from neo4j import GraphDatabase
 import PyPDF2
@@ -11,27 +12,30 @@ import json
 class GraphSeeder:
     def __init__(self, uri, user, password, ticker):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        self.ticker = ticker.strip().upper() # Force uppercase/clean
+        self.ticker = ticker.strip().upper()
         self.data_dir = os.path.join("data", self.ticker)
-        
-        # Local Ollama setup
         self.ollama_url = "http://localhost:11434/api/chat"
         self.model = "deepseek-r1:8b"
 
-    def chat(self, prompt):
+    def chat(self, prompt, retries=3):
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 4000}
+            "options": {"temperature": 0.1, "num_predict": 4000, "num_ctx": 8192} 
         }
-        try:
-            response = requests.post(self.ollama_url, json=payload, timeout=600)
-            response.raise_for_status()
-            return response.json()["message"]["content"]
-        except Exception as e:
-            print(f"❌ Ollama Error: {e}")
-            return ""
+        
+        for attempt in range(retries):
+            try:
+                response = requests.post(self.ollama_url, json=payload, timeout=600)
+                response.raise_for_status()
+                return response.json()["message"]["content"]
+            except Exception as e:
+                print(f"   ⚠️ Ollama Error (Attempt {attempt+1}/{retries}): {e}")
+                time.sleep(2) # Wait before retry
+        
+        print("   ❌ Ollama failed after all retries.")
+        return ""
 
     def extract_text(self, file_path):
         text = ""
@@ -39,8 +43,8 @@ class GraphSeeder:
             if file_path.endswith('.pdf'):
                 with open(file_path, 'rb') as f:
                     reader = PyPDF2.PdfReader(f)
-                    # Limit to first 10 pages for speed/relevance in this demo
-                    for i in range(min(10, len(reader.pages))): 
+                    # Limit to first 5 pages to reduce load
+                    for i in range(min(5, len(reader.pages))): 
                         text += reader.pages[i].extract_text() + "\n"
             else:
                 with open(file_path, 'r', errors='ignore') as f:
@@ -50,11 +54,14 @@ class GraphSeeder:
         return text
 
     def get_entities(self, text):
+        # Chunk text to avoid context overflow (Ollama 500 cause)
+        chunk = text[:6000] 
+        
         prompt = f"""
-        Extract 15 key business entities from this text for {self.ticker}.
+        Extract 10 key business entities from this text for {self.ticker}.
         Allowed Types: Strategy, Risk, Segment, Product, Metric.
         
-        Text: {text[:10000]}...
+        Text: {chunk}...
         
         Output ONLY valid JSON list:
         [
@@ -64,7 +71,7 @@ class GraphSeeder:
         """
         response = self.chat(prompt)
         clean_json = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
-        # Try to find JSON block
+        
         match = re.search(r'\[.*\]', clean_json, re.DOTALL)
         if match:
             try:
@@ -82,9 +89,7 @@ class GraphSeeder:
         with self.driver.session() as session:
             if reset:
                 print(f"🧹 Nuclear Wipe for {self.ticker}...")
-                # Delete Company and anything connected to it
                 session.run("MATCH (c:Company {ticker: $t}) DETACH DELETE c", t=self.ticker)
-                # Delete any stray nodes tagged with this ticker
                 session.run("MATCH (n {ticker: $t}) DETACH DELETE n", t=self.ticker)
 
             print(f"🏗️  Creating Company Node: {self.ticker}")
@@ -110,7 +115,6 @@ class GraphSeeder:
                     title = e.get("title", "Untitled")
                     desc = e.get("description", "")
                     
-                    # Map type to relationship
                     rel_map = {
                         "Strategy": "HAS_STRATEGY",
                         "Risk": "FACES_RISK",
@@ -121,7 +125,6 @@ class GraphSeeder:
                     rel_type = rel_map.get(etype)
                     if not rel_type: continue
 
-                    # Atomic Merge for stability
                     query = f"""
                         MATCH (c:Company {{ticker: $ticker}})
                         MERGE (n:{etype} {{title: $title, ticker: $ticker}})
@@ -133,7 +136,6 @@ class GraphSeeder:
         self.driver.close()
         print(f"✅ Seeding Complete: {self.ticker}")
 
-# Adapter for orchestrator
 def seed(uri, user, password, ticker, reset=False):
     GraphSeeder(uri, user, password, ticker).seed(reset)
 
