@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 2.6 - Fixed Missing Methods (research/trace_summary)
+Version: 3.0 - Atomic Citation Enforced (Target: 110/100 Quality)
 """
 
 import os
@@ -556,7 +556,7 @@ class ReActOrchestrator:
             for num, doc in sorted(document_sources.items())
         ])
         
-        # 🔥 10/10 PROFESSIONAL EQUITY RESEARCH SYNTHESIS PROMPT
+        # 🔥 110/100 QUALITY: ATOMIC CITATION ENFORCEMENT PROMPT
         prompt = f"""You are a Senior Equity Research Analyst at a top-tier investment bank synthesizing an institutional-grade research report.
 
 REPORT DATE: {current_date}
@@ -631,37 +631,41 @@ EXAMPLE FORMAT (FOLLOW THIS):
 [Will be auto-generated - DO NOT include in your response]
 
 ==========================================================================
-🔥 CITATION REQUIREMENTS (100% COMPLIANCE MANDATORY) 🔥
+🔥 CITATION REQUIREMENTS (EXTREME STRICTNESS) 🔥
 ==========================================================================
 
-1. **EVERY FACTUAL CLAIM MUST BE CITED**
-   - **RULE**: Any sentence containing a number, date, or specific fact MUST end with a citation.
-   - ✅ "Revenue reached $394B per FY2025 10-K [1]."
-   - ❌ "Revenue reached $394B." (NO CITATION = UNACCEPTABLE)
+1. **ATOMIC CITATION RULE (CRITICAL)**
+   - You MUST place a citation immediately after EVERY SINGLE metric, number, or fact.
+   - ❌ BAD: "Revenue was $10B, margin 20%, and growth 5% [1]." (Grouped citation)
+   - ✅ GOOD: "Revenue was $10B [1], margin 20% [1], and growth 5% [1]." (Atomic citation)
 
-2. **SENTENCE-LEVEL CITATION**
+2. **LISTS OF DATA**
+   - ❌ BAD: "P/E 20x, EV/Sales 5x, Market Cap $1T [2]"
+   - ✅ GOOD: "P/E 20x [2], EV/Sales 5x [2], Market Cap $1T [2]"
+
+3. **SENTENCE-LEVEL CITATION**
    - Do NOT group citations at the end of a paragraph. Cite immediately after the fact.
    - ✅ "Services revenue grew 15% [1], while hardware declined 2% [2]."
    - ❌ "Services revenue grew 15% while hardware declined 2% [1][2]."
 
-3. **EVERY NUMBER MUST BE CITED**
+4. **EVERY NUMBER MUST BE CITED**
    - ✅ "Market cap of $2.4T [9]."
    - ❌ "Market cap of $2.4T." (NO CITATION = UNACCEPTABLE)
 
-4. **TEMPORAL MARKERS (MANDATORY)**
+5. **TEMPORAL MARKERS (MANDATORY)**
    - 10-K: "Per FY2025 10-K [1]" or "As disclosed in annual filing [2]"
    - Web: "As of Q1 2026 [8]" or "Recent reports indicate [9]" or "Per January 2026 analyst note [10]"
 
-5. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
+6. **INVESTMENT THESIS MUST HAVE 8+ CITATIONS**
    - Each bullet point needs 2-3 citations minimum
    - Mix historical [1-7] and current [8+] sources
 
-6. **FORMAT**
+7. **FORMAT**
    - Replace [SOURCE-X] with [X]
    - Space before citation: "text [1]" not "text[1]"
    - Multiple citations: "text [1][2][3]" not "text [1,2,3]"
 
-7. **PROFESSIONAL TONE**
+8. **PROFESSIONAL TONE**
    - Exact figures: "15.23%" not "around 15%" or "approximately 15%"
    - Attribution: "Goldman Sachs (January 2026) projects [X]" not "analysts think"
    - Objectivity: "Data indicates" not "we believe" or "I think"
@@ -695,7 +699,8 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
             # 🔥 Qwen 2.5 7B optimized parameters (faster than DeepSeek)
             final_report = synthesis_client.chat(
                 messages, 
-                temperature=0.15,  # Qwen performs well at lower temp for synthesis
+                # 🔥 FIX: Increased temperature to 0.2 to help with instruction following (too low = rigid)
+                temperature=0.2,
                 num_predict=3500,  # Same token count
                 timeout=600        # 🔥 FIX 3: Increased from 240s to 600s (10 minutes)
             )
