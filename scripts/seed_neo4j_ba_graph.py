@@ -8,199 +8,141 @@ import requests
 import re
 import json
 
-# Local fallback client
-class OllamaClient:
-    def __init__(self, base_url="http://localhost:11434", model="deepseek-r1:8b"):
-        self.base_url = base_url
-        self.model = model
-    
-    def chat(self, messages, temperature=0.2, num_predict=4000):
-        url = f"{self.base_url}/api/chat"
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": temperature, "num_predict": num_predict}
-        }
-        try:
-            response = requests.post(url, json=payload, timeout=600)
-            response.raise_for_status()
-            return response.json()["message"]["content"]
-        except Exception as e:
-            print(f"Ollama Error: {e}")
-            return ""
-
 class GraphSeeder:
     def __init__(self, uri, user, password, ticker):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        self.ticker = ticker
-        self.data_dir = os.path.join("data", ticker)
-        self.ollama_client = OllamaClient(base_url="http://localhost:11434", model="deepseek-r1:8b")
+        self.ticker = ticker.strip().upper() # Force uppercase/clean
+        self.data_dir = os.path.join("data", self.ticker)
+        
+        # Local Ollama setup
+        self.ollama_url = "http://localhost:11434/api/chat"
+        self.model = "deepseek-r1:8b"
 
-    def extract_text_from_pdf(self, pdf_path):
+    def chat(self, prompt):
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 4000}
+        }
+        try:
+            response = requests.post(self.ollama_url, json=payload, timeout=600)
+            response.raise_for_status()
+            return response.json()["message"]["content"]
+        except Exception as e:
+            print(f"❌ Ollama Error: {e}")
+            return ""
+
+    def extract_text(self, file_path):
         text = ""
         try:
-            with open(pdf_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                limit = min(15, len(reader.pages))
-                for i in range(limit): 
-                    text += reader.pages[i].extract_text() + "\n"
+            if file_path.endswith('.pdf'):
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    # Limit to first 10 pages for speed/relevance in this demo
+                    for i in range(min(10, len(reader.pages))): 
+                        text += reader.pages[i].extract_text() + "\n"
+            else:
+                with open(file_path, 'r', errors='ignore') as f:
+                    text = f.read()
         except Exception as e:
-            print(f"❌ Error reading {pdf_path}: {e}")
+            print(f"❌ Error reading {file_path}: {e}")
         return text
 
-    def get_filing_files(self):
-        if not os.path.exists(self.data_dir):
-            print(f"❌ Data directory not found: {self.data_dir}")
-            return []
-        return glob.glob(os.path.join(self.data_dir, "*.pdf")) + \
-               glob.glob(os.path.join(self.data_dir, "*.txt")) + \
-               glob.glob(os.path.join(self.data_dir, "*.docx"))
-
-    def semantic_extraction(self, text, source_file):
-        sample_text = text[:15000] 
-        
-        # Expanded prompt to explicitly allow Products and Metrics
+    def get_entities(self, text):
         prompt = f"""
-        Analyze this 10-K text for {self.ticker}.
-        Extract 10-15 key business entities.
+        Extract 15 key business entities from this text for {self.ticker}.
+        Allowed Types: Strategy, Risk, Segment, Product, Metric.
         
-        Allowed Types: 'Strategy', 'Risk', 'Segment', 'Product', 'Metric'.
+        Text: {text[:10000]}...
         
-        TEXT SAMPLE:
-        {sample_text}
-        
-        INSTRUCTIONS:
-        Return a valid JSON list. 
-        Do not include any 'thinking' text or markdown blocks outside the JSON.
-        
-        FORMAT:
+        Output ONLY valid JSON list:
         [
-            {{"type": "Strategy", "title": "AI Expansion", "description": "Investing in generative AI..."}},
-            {{"type": "Risk", "title": "Supply Chain", "description": "Dependence on China..."}},
-            {{"type": "Product", "title": "Azure", "description": "Cloud computing platform..."}},
-            {{"type": "Metric", "title": "Revenue Growth", "description": "18% year-over-year..."}}
+            {{"type": "Product", "title": "Azure", "description": "Cloud platform..."}},
+            {{"type": "Metric", "title": "Revenue Growth", "description": "20% increase..."}}
         ]
         """
-        
-        try:
-            messages = [{"role": "user", "content": prompt}]
-            response = self.ollama_client.chat(messages, temperature=0.1)
-            
-            clean_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
-            
-            if "```json" in clean_response:
-                json_str = clean_response.split("```json")[1].split("```")[0]
-            elif "```" in clean_response:
-                json_str = clean_response.split("```")[1].split("```")[0]
-            else:
-                json_str = clean_response
-                
-            entities = json.loads(json_str)
-            return entities
-            
-        except Exception as e:
-            print(f"⚠️ Extraction failed: {e}")
-            return []
+        response = self.chat(prompt)
+        clean_json = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+        # Try to find JSON block
+        match = re.search(r'\[.*\]', clean_json, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except:
+                pass
+        return []
 
     def seed(self, reset=False):
-        files = self.get_filing_files()
+        files = glob.glob(os.path.join(self.data_dir, "*"))
         if not files:
-            print(f"⚠️ No files found for {self.ticker}. Skipping ingestion.")
+            print(f"⚠️ No files in {self.data_dir}")
             return
 
-        now = datetime.utcnow().isoformat()
-        
         with self.driver.session() as session:
             if reset:
-                print(f"🧹 Wiping graph data for {self.ticker}...")
-                # 1. Delete nodes with the specific ticker property
-                session.run("MATCH (n {ticker:$ticker}) DETACH DELETE n", ticker=self.ticker)
-                # 2. Cleanup: Delete any Company node with this ticker (even if property missing on some labels)
-                session.run("MATCH (c:Company {name:$ticker}) DETACH DELETE c", ticker=self.ticker)
+                print(f"🧹 Nuclear Wipe for {self.ticker}...")
+                # Delete Company and anything connected to it
+                session.run("MATCH (c:Company {ticker: $t}) DETACH DELETE c", t=self.ticker)
+                # Delete any stray nodes tagged with this ticker
+                session.run("MATCH (n {ticker: $t}) DETACH DELETE n", t=self.ticker)
 
-            session.run(
-                """
-                MERGE (c:Company {ticker:$ticker})
-                ON CREATE SET c.name=$ticker, c.created_at=$now
-                ON MATCH  SET c.updated_at=$now
-                """,
-                ticker=self.ticker, now=now
-            )
+            print(f"🏗️  Creating Company Node: {self.ticker}")
+            session.run("""
+                MERGE (c:Company {ticker: $t})
+                ON CREATE SET c.name = $t, c.created_at = datetime()
+                ON MATCH SET c.updated_at = datetime()
+            """, t=self.ticker)
 
             for file_path in files:
+                if not os.path.isfile(file_path): continue
                 filename = os.path.basename(file_path)
                 print(f"📄 Processing {filename}...")
                 
-                if file_path.endswith('.pdf'):
-                    text = self.extract_text_from_pdf(file_path)
-                else:
-                    with open(file_path, 'r', errors='ignore') as f:
-                        text = f.read()
-                
+                text = self.extract_text(file_path)
                 if not text: continue
-
-                print(f"   🧠 Extracting graph entities from {filename}...")
-                entities = self.semantic_extraction(text, filename)
-                print(f"   🔹 Found {len(entities)} entities. Writing to Neo4j...")
                 
-                for entity in entities:
-                    label = entity.get("type", "Unknown").capitalize()
-                    title = entity.get("title", "Untitled")
-                    desc = entity.get("description", "")
+                entities = self.get_entities(text)
+                print(f"   🔹 Found {len(entities)} entities. Linking to Graph...")
+                
+                for e in entities:
+                    etype = e.get("type", "Unknown").capitalize()
+                    title = e.get("title", "Untitled")
+                    desc = e.get("description", "")
                     
-                    # Define Cypher based on Label
-                    if label == "Strategy":
-                        rel = "[:HAS_STRATEGY]"
-                        node_label = "Strategy"
-                    elif label == "Risk":
-                        rel = "[:FACES_RISK]"
-                        node_label = "Risk"
-                    elif label == "Segment":
-                        rel = "[:HAS_SEGMENT]"
-                        node_label = "Segment"
-                    elif label == "Product":
-                        rel = "[:OFFERS_PRODUCT]"
-                        node_label = "Product"
-                    elif label == "Metric":
-                        rel = "[:TRACKS_METRIC]"
-                        node_label = "Metric"
-                    else:
-                        continue # Skip unknown types
-                        
-                    cypher = f"""
-                    MATCH (c:Company {{ticker:$ticker}})
-                    MERGE (n:{node_label} {{title:$title, ticker:$ticker}})
-                    SET n.description=$desc, n.source=$source, n.updated_at=$now
-                    MERGE (c)-{rel}->(n)
-                    """
-                        
-                    session.run(
-                        cypher,
-                        ticker=self.ticker,
-                        title=title,
-                        desc=desc,
-                        source=filename,
-                        now=now
-                    )
-                    
-        self.driver.close()
-        print(f"✅ Seeding complete for {self.ticker}")
+                    # Map type to relationship
+                    rel_map = {
+                        "Strategy": "HAS_STRATEGY",
+                        "Risk": "FACES_RISK",
+                        "Segment": "HAS_SEGMENT",
+                        "Product": "OFFERS_PRODUCT",
+                        "Metric": "TRACKS_METRIC"
+                    }
+                    rel_type = rel_map.get(etype)
+                    if not rel_type: continue
 
+                    # Atomic Merge for stability
+                    query = f"""
+                        MATCH (c:Company {{ticker: $ticker}})
+                        MERGE (n:{etype} {{title: $title, ticker: $ticker}})
+                        ON CREATE SET n.description = $desc, n.source = $source
+                        MERGE (c)-[:{rel_type}]->(n)
+                    """
+                    session.run(query, ticker=self.ticker, title=title, desc=desc, source=filename)
+        
+        self.driver.close()
+        print(f"✅ Seeding Complete: {self.ticker}")
+
+# Adapter for orchestrator
 def seed(uri, user, password, ticker, reset=False):
-    seeder = GraphSeeder(uri, user, password, ticker)
-    seeder.seed(reset=reset)
+    GraphSeeder(uri, user, password, ticker).seed(reset)
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--ticker", required=True)
     ap.add_argument("--reset", action="store_true")
     args = ap.parse_args()
-
-    seed(
-        uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-        user=os.getenv("NEO4J_USER", "neo4j"),
-        password=os.getenv("NEO4J_PASSWORD", "password"),
-        ticker=args.ticker,
-        reset=args.reset
-    )
+    seed(os.getenv("NEO4J_URI", "bolt://localhost:7687"), 
+         os.getenv("NEO4J_USER", "neo4j"), 
+         os.getenv("NEO4J_PASSWORD", "password"), 
+         args.ticker, args.reset)
