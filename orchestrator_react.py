@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.4 - Unlimited Timeout for Local Inference
+Version: 3.5 - Improved Citation Formatting
 """
 
 import os
@@ -313,10 +313,14 @@ class ReActOrchestrator:
                 key = f"{title.strip()}||{url.strip()}"
                 if key not in sources.values():
                     sources[idx] = key; idx += 1
-            # Local
+            # Local (Graph Facts)
             for src in re.findall(r'---\s*SOURCE:\s*([^\(\n]+?)(?:\([^\)]+\))?\s*---', content, re.IGNORECASE):
                 src = src.strip()
                 if "http" not in src and src not in sources.values():
+                    # Clean up ugly Graph citations if needed
+                    if "GRAPH FACT" in src:
+                        # Convert "GRAPH FACT: MSFT -[HAS_SEGMENT]-> ['Cloud']" -> "Internal Graph Knowledge: Cloud Segment"
+                        pass 
                     sources[idx] = src; idx += 1
         return sources
 
@@ -376,14 +380,22 @@ class ReActOrchestrator:
             resp = self.client.chat([{"role": "user", "content": prompt}], temperature=0.3)
             report = re.sub(r'<think>.*?</think>', '', resp, flags=re.DOTALL).strip()
             
-            # Add References
+            # Add References (Cleaned)
             ref_section = "\n\n## References\n\n"
             for k, v in sources.items():
                 if "||" in v:
                     t, u = v.split("||")
                     ref_section += f"[{k}] **{t}** ([Link]({u}))\n"
                 else:
-                    ref_section += f"[{k}] **{v}** (System Authenticated Source)\n"
+                    # Clean up local citations
+                    display_text = v
+                    if "GRAPH FACT" in v:
+                         # Attempt to make it readable: "GRAPH FACT: MSFT -[RISK]-> ['Competition']"
+                         match = re.search(r"-> \['(.*?)'\]", v)
+                         if match:
+                             display_text = f"Internal Graph Knowledge: {match.group(1)}"
+                    
+                    ref_section += f"[{k}] **{display_text}** (System Authenticated Source)\n"
             
             return report + ref_section
         except Exception as e:
