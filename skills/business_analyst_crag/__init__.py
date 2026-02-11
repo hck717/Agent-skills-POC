@@ -2,6 +2,7 @@ import os
 from .ingestion import SemanticChunker
 from .retrieval import HybridRetriever
 from .crag_evaluator import CragEvaluator
+from .local_sec_retriever import retrieve_local_sec
 import ollama
 
 try:
@@ -52,10 +53,17 @@ class BusinessAnalystCRAG:
         docs = [d['content'] for d in retrieval_result['documents']] if retrieval_result['documents'] else []
         graph_data = retrieval_result['graph_context']
         
-        combined_context = docs + graph_data
+        data_path = os.getenv("DATA_PATH", "./data")
+
+        # If Qdrant/Neo4j returned nothing, fallback to local SEC PDFs
+        if not docs and not graph_data:
+            local_chunks = retrieve_local_sec(data_path, ticker, query, k=6)
+            combined_context = local_chunks + graph_data  # graph_data likely empty too
+        else:
+            combined_context = docs + graph_data
         
         if not combined_context:
-             print("   ⚠️ No context found in DBs. Skipping CRAG eval.")
+             print("   ⚠️ No context found in DBs or Local PDFs. Skipping CRAG eval.")
              status = "INCORRECT" # Force fallback
         else:
             # 2. Evaluation (CRAG)
@@ -86,24 +94,40 @@ class BusinessAnalystCRAG:
         context_str = "\n".join([str(c) for c in final_context])
         
         prompt = f"""
-        You are a Senior Business Strategy Analyst (CFA/MBA level).
-        Your task is to analyze the following verified context and answer the query using professional strategic frameworks.
-        
-        VERIFIED CONTEXT FROM 10-K/GRAPH:
+        You are a Senior Business Analyst (strategy + operating model + risk).
+        Use ONLY the VERIFIED CONTEXT below. If a fact/number is not present, say: "Not in provided context."
+
+        CITATION FORMAT (MANDATORY):
+        After every paragraph, output exactly one citation line copied from context:
+        --- SOURCE: <filename> (Page <X>) ---
+        If you used a graph fact, cite:
+        --- SOURCE: Neo4j (local graph) ---
+
+        VERIFIED CONTEXT:
         {context_str}
-        
-        USER QUERY: {query}
-        
-        INSTRUCTIONS:
-        1. Answer the query directly using the Evidence provided.
-        2. If the query implies strategic analysis, use relevant frameworks where appropriate:
-           - SWOT (Strengths, Weaknesses, Opportunities, Threats)
-           - Porter's 5 Forces (Competition, Suppliers, Buyers, etc.)
-           - PESTLE (Political, Economic, etc.)
-        3. Highlight specific RISKS (Operational, Financial, Strategic) found in the context.
-        4. Maintain a professional, objective tone suitable for an investment memo.
-        
-        STRATEGIC ANALYSIS:
+
+        USER QUESTION:
+        {query}
+
+        OUTPUT STRUCTURE:
+        ## Operating model (2026)
+        (2 paragraphs, each followed by a SOURCE line)
+
+        ## Revenue drivers
+        (2 paragraphs, each followed by a SOURCE line)
+
+        ## Opportunities (2026)
+        - Bullet (end bullet with a SOURCE line)
+        - Bullet (end bullet with a SOURCE line)
+        - Bullet (end bullet with a SOURCE line)
+
+        ## Risks (2026)
+        - Bullet (end bullet with a SOURCE line)
+        - Bullet (end bullet with a SOURCE line)
+        - Bullet (end bullet with a SOURCE line)
+
+        ## Trade-offs / contradictions
+        (1 paragraph followed by a SOURCE line)
         """
         
         try:
