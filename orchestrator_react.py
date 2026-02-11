@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.11 - Force Web Search for Hybrid Context
+Version: 3.2 - Added Metadata Extraction (Timeframe & Topic Filtering)
 """
 
 import os
@@ -57,6 +57,7 @@ class Action:
     task_description: Optional[str] = None
     reasoning: Optional[str] = None
     ticker: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict) # Added Metadata
 
 @dataclass
 class Observation:
@@ -135,6 +136,7 @@ class ReActOrchestrator:
         self.specialist_agents = {}
         self.trace = ReActTrace()
         self.current_ticker = None
+        self.current_metadata = {}
 
         if BusinessAnalystCRAG:
             try:
@@ -148,7 +150,6 @@ class ReActOrchestrator:
                 
         if WebSearchAgent:
             try:
-                # Assuming WebSearchAgent takes an API key or is configured via env
                 self.register_specialist("web_search_agent", WebSearchAgent())
             except Exception as e:
                 print(f"⚠️ Failed to auto-register web_search_agent: {e}")
@@ -160,35 +161,61 @@ class ReActOrchestrator:
     def test_connection(self) -> bool:
         return self.client.test_connection()
     
-    def _extract_ticker(self, user_query: str, callback: Optional[Callable] = None) -> Optional[str]:
+    def _extract_ticker_and_meta(self, user_query: str, callback: Optional[Callable] = None) -> Tuple[Optional[str], Dict]:
         if callback:
-             callback("Pre-Processing", "Identifying target company...", "running")
+             callback("Pre-Processing", "Identifying company and scope...", "running")
              
-        prompt = f"Extract ticker from: '{user_query}'. If none, say NONE. Output ONLY ticker."
+        prompt = f"""
+        Analyze this query: '{user_query}'
+        
+        Extract:
+        1. Ticker (e.g., MSFT, AAPL). If none, say NONE.
+        2. Years (e.g., [2024, 2025]). If none, return empty list.
+        3. Topics (e.g., ["Risk", "Revenue", "Strategy"]). Pick from: [Risk, Strategy, Financials, Product, Management].
+        
+        Output ONLY valid JSON:
+        {{
+            "ticker": "MSFT",
+            "years": [2025],
+            "topics": ["Risk"]
+        }}
+        """
         try:
-            response = self.client.chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=50)
+            response = self.client.chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=150)
             clean_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
             
-            ticker = "NONE"
-            words = clean_response.split()
-            for word in words:
-                clean_word = re.sub(r'[^A-Z]', '', word.upper())
-                if 2 <= len(clean_word) <= 5 and clean_word not in ["THE", "AND", "NONE"]:
-                    ticker = clean_word
-                    break
-            
-            if ticker == "NONE" and "apple" in user_query.lower(): ticker = "AAPL"
-            elif ticker == "NONE" and "microsoft" in user_query.lower(): ticker = "MSFT"
-            
-            if ticker == "NONE":
-                if callback: callback("Pre-Processing", "No specific company identified", "complete")
-                return None
-            
-            print(f"   🔍 Identified Ticker: {ticker}")
-            if callback: callback("Pre-Processing", f"Identified Target: {ticker}", "complete")
-            return ticker
-        except:
-            return None
+            # Find JSON
+            match = re.search(r'\{.*\}', clean_response, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                ticker = data.get("ticker", "NONE")
+                
+                # Cleanup Ticker
+                if ticker != "NONE":
+                    ticker = re.sub(r'[^A-Z]', '', ticker.upper())
+                else:
+                    # Fallback Logic
+                    if "apple" in user_query.lower(): ticker = "AAPL"
+                    elif "microsoft" in user_query.lower(): ticker = "MSFT"
+                
+                # Cleanup Meta
+                metadata = {
+                    "years": data.get("years", []),
+                    "topics": data.get("topics", [])
+                }
+                
+                if ticker == "NONE":
+                    if callback: callback("Pre-Processing", "No specific company identified", "complete")
+                    return None, {}
+                
+                print(f"   🔍 Target: {ticker} | Meta: {metadata}")
+                if callback: callback("Pre-Processing", f"Identified: {ticker} ({metadata.get('years', 'All Time')})", "complete")
+                return ticker, metadata
+                
+            return None, {}
+        except Exception as e:
+            print(f"Meta extraction failed: {e}")
+            return None, {}
 
     def _auto_seed_graph(self, ticker: str, callback: Optional[Callable] = None):
         if not seed: return
@@ -213,12 +240,26 @@ class ReActOrchestrator:
         
         # Rule 1: Always start with Business Analyst (CRAG)
         if "business_analyst_crag" in self.specialist_agents and "business_analyst_crag" not in called_agents:
-            return Action(ActionType.CALL_SPECIALIST, "business_analyst_crag", user_query, "Rule 1: Deep Reader", self.current_ticker)
+            return Action(
+                ActionType.CALL_SPECIALIST, 
+                "business_analyst_crag", 
+                user_query, 
+                "Rule 1: Deep Reader", 
+                self.current_ticker,
+                self.current_metadata # Pass metadata
+            )
 
-        # Rule 2: ALWAYS call Web Search next for Hybrid Context (RELAXED CONDITION)
+        # Rule 2: ALWAYS call Web Search next for Hybrid Context
         if "web_search_agent" in self.specialist_agents and "web_search_agent" not in called_agents:
             print("   💡 Forced Web Search for Hybrid Report")
-            return Action(ActionType.CALL_SPECIALIST, "web_search_agent", user_query, "Rule 2: Forced Web Context", self.current_ticker)
+            return Action(
+                ActionType.CALL_SPECIALIST, 
+                "web_search_agent", 
+                user_query, 
+                "Rule 2: Forced Web Context", 
+                self.current_ticker,
+                self.current_metadata # Pass metadata
+            )
         
         return Action(ActionType.FINISH, reasoning="Analysis complete")
     
@@ -227,14 +268,14 @@ class ReActOrchestrator:
         
         if action.action_type == ActionType.CALL_SPECIALIST:
             if callback: callback(f"Action: {action.agent_name}", f"Executing {action.agent_name}...", "running")
-            result = self._call_specialist(action.agent_name, action.task_description, action.ticker)
+            result = self._call_specialist(action.agent_name, action.task_description, action.ticker, action.metadata)
             if callback: callback(f"Action: {action.agent_name}", f"Completed {action.agent_name}", "complete")
             return Observation(action, result, True, {"agent": action.agent_name})
         
         return Observation(action, "Orchestration complete", True)
     
-    def _call_specialist(self, agent_name: str, task: str, ticker: str = None) -> str:
-        print(f"   🤖 Calling {agent_name} (Ticker: {ticker})...")
+    def _call_specialist(self, agent_name: str, task: str, ticker: str = None, metadata: Dict = {}) -> str:
+        print(f"   🤖 Calling {agent_name} (Ticker: {ticker} | Meta: {metadata})...")
         if agent_name in self.specialist_agents:
             agent = self.specialist_agents[agent_name]
             try:
@@ -243,6 +284,7 @@ class ReActOrchestrator:
                 kwargs = {}
                 if 'ticker' in sig.parameters: kwargs['ticker'] = ticker or "AAPL"
                 if 'prior_analysis' in sig.parameters: kwargs['prior_analysis'] = "" 
+                if 'metadata' in sig.parameters: kwargs['metadata'] = metadata # Pass only if agent supports it
                 
                 result = agent.analyze(task, **kwargs)
                 print(f"   ✅ {agent_name} completed ({len(result)} chars)")
@@ -288,7 +330,7 @@ class ReActOrchestrator:
                 key = None
                 if "http" in full:
                     wm = re.search(r'\((https?://[^\)]+)\)', full)
-                    if wm: key = wm.group(1) # Approximate match by URL
+                    if wm: key = wm.group(1)
                 else:
                     gm = re.search(r'SOURCE:\s*([^\(\n]+)', full)
                     if gm: key = gm.group(1).strip()
@@ -301,12 +343,15 @@ class ReActOrchestrator:
             out['result'] = re.sub(r'---\s*SOURCE:.*?\s*---', repl, out['result'], flags=re.IGNORECASE)
 
         context = "\n\n".join([f"FROM {o['agent'].upper()}:\n{o['result']}" for o in outputs])
-        refs_str = "\n".join([f"[{k}] {v}" for k,v in sources.items()])
+        
+        # Metadata context
+        meta_context = f"Focused Years: {self.current_metadata.get('years', 'All')}\nTopics: {self.current_metadata.get('topics', 'General')}"
         
         prompt = f"""
         Role: Senior Equity Research Analyst.
         Date: {datetime.now().strftime('%B %d, %Y')}
         Query: {user_query}
+        Constraints: {meta_context}
         
         CONTEXT:
         {context}
@@ -339,9 +384,14 @@ class ReActOrchestrator:
     def research(self, user_query: str, callback: Optional[Callable] = None) -> str:
         self.trace = ReActTrace()
         self.current_ticker = None
-        ticker = self._extract_ticker(user_query, callback)
+        self.current_metadata = {}
+        
+        # Combined extraction (Ticker + Metadata)
+        ticker, metadata = self._extract_ticker_and_meta(user_query, callback)
+        
         if ticker:
             self.current_ticker = ticker
+            self.current_metadata = metadata
             self._auto_seed_graph(ticker, callback)
             
         for i in range(1, self.max_iterations + 1):
@@ -357,4 +407,4 @@ class ReActOrchestrator:
 
 if __name__ == "__main__":
     r = ReActOrchestrator()
-    r.research("Analyze Microsoft")
+    r.research("Analyze Microsoft 2025 risks")
