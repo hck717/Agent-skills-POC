@@ -127,7 +127,7 @@ def main():
             full_response = ""
             
             # Re-initialize/Update orchestrator with current settings
-            orchestrator = ReActOrchestrator() # Orchestrator uses its own models defined in class, but we could pass it if needed
+            orchestrator = ReActOrchestrator() # Orchestrator uses its own models defined in class
             
             # Register Selected Agents with UI Credentials
             if use_crag and BusinessAnalystCRAG:
@@ -151,15 +151,34 @@ def main():
                  except Exception as e:
                     st.error(f"Failed to load Web Agent: {e}")
 
-            with st.spinner("Orchestrating agents..."):
-                try:
-                    # Run research
-                    final_report = orchestrator.research(prompt)
-                    full_response = final_report
-                    message_placeholder.markdown(full_response)
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-                    full_response = f"Error: {str(e)}"
+            # 🔥 UI: Chain of Thought Visualization
+            status_container = st.status("🤖 Orchestrator working...", expanded=True)
+            
+            def ui_callback(step: str, detail: str, status: str):
+                """Callback to update Streamlit UI from Orchestrator"""
+                # Log to console for debugging
+                print(f"[UI] {step}: {detail} ({status})")
+                
+                if status == "running":
+                    status_container.write(f"**{step}**: {detail}")
+                elif status == "complete":
+                    status_container.write(f"✅ **{step}**: {detail}")
+                elif status == "error":
+                    status_container.error(f"❌ **{step}**: {detail}")
+            
+            try:
+                # Run research with callback
+                final_report = orchestrator.research(prompt, callback=ui_callback)
+                
+                # Close status container
+                status_container.update(label="✅ Analysis Complete", state="complete", expanded=False)
+                
+                full_response = final_report
+                message_placeholder.markdown(full_response)
+            except Exception as e:
+                status_container.update(label="❌ Analysis Failed", state="error", expanded=True)
+                st.error(f"Error: {str(e)}")
+                full_response = f"Error: {str(e)}"
 
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
