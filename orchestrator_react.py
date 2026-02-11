@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis AND Synthesis (Upgraded for Quality)
 - Qwen 2.5 7B: Backup / Legacy
 
-Version: 3.4 - Validator Fixes & Intro Citation Enforcement
+Version: 3.5 - Perfectionist Citation Logic (Growth Rates)
 """
 
 import os
@@ -665,20 +665,23 @@ PROFESSIONAL REPORT STRUCTURE (MANDATORY)
    - ❌ BAD: "Revenue was $10B, margin 20%, and growth 5% [1]." (Grouped citation)
    - ✅ GOOD: "Revenue was $10B [1], margin 20% [1], and growth 5% [1]." (Atomic citation)
 
-2. **VALUATION SECTION RULE**
-   - MUST be a bulleted list.
-   - ❌ BAD: Writing valuation as a paragraph.
-   - ✅ GOOD: Bullet points with one citation per metric.
+2. **COMPOUND METRIC RULE (GROWTH RATES)**
+   - If a sentence has a value AND a growth rate, CITE BOTH.
+   - ❌ BAD: "Revenue $10B [1] up 20% YoY."
+   - ✅ GOOD: "Revenue $10B [1] up 20% YoY [1]."
 
-3. **SUMMARY/INTRO RULE**
+3. **VALUATION SECTION RULE**
+   - MUST be a bulleted list.
+
+4. **SUMMARY/INTRO RULE**
    - Introductions to sections MUST have a citation if they make a claim.
    - If writing a general summary sentence, default to citing the primary source [1].
 
-4. **EVERY NUMBER MUST BE CITED**
-   - ✅ "Market cap of $2.4T [9]."
-   - ❌ "Market cap of $2.4T." (NO CITATION = UNACCEPTABLE)
+5. **FORMAT**
+   - Replace [SOURCE-X] with [X]
+   - Space before citation: "text [1]" not "text[1]"
 
-5. **THINKING PROCESS**
+6. **THINKING PROCESS**
    - If you need to think, do it internally. Output ONLY the final report.
 
 ==========================================================================
