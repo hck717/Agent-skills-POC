@@ -4,10 +4,7 @@ Web Search Agent ("News Desk")
 
 Goal: Find unknown unknowns fast.
 Architecture: Step-Back Prompting + HyDE expansion + corrective reranking.
-
-- Step-back: broaden the question to capture macro/sector/ticker catalysts.
-- HyDE: generate a hypothetical news brief to create intent-rich search queries.
-- Filtering: dedupe + rerank (Cohere rerank optional; local LLM rerank fallback).
+Trusted Domains: Bloomberg, Reuters, WSJ, CNBC, FT, TechCrunch.
 
 Outputs MUST preserve SOURCE markers:
 --- SOURCE: Title (https://...) ---
@@ -25,6 +22,12 @@ from tavily import TavilyClient
 
 
 class WebSearchAgent:
+    TRUSTED_DOMAINS = [
+        "bloomberg.com", "reuters.com", "wsj.com", "cnbc.com", "ft.com", 
+        "techcrunch.com", "forbes.com", "marketwatch.com", "yahoo.com/finance",
+        "investopedia.com", "businessinsider.com", "nytimes.com", "seekingalpha.com"
+    ]
+
     def __init__(
         self,
         tavily_api_key: Optional[str] = None,
@@ -39,101 +42,57 @@ class WebSearchAgent:
         self.ollama_model = ollama_model
         self.ollama_base_url = ollama_base_url
         self.tavily = TavilyClient(api_key=self.tavily_api_key)
-
         self.cohere_api_key = cohere_api_key or os.getenv("COHERE_API_KEY")
 
         print(f"✅ Web Search Agent initialized (News Desk, model={ollama_model})")
 
-    # -------------------------
-    # Helper: Clean DeepSeek Output
-    # -------------------------
     def _clean_think(self, text: str) -> str:
-        """Removes <think>...</think> blocks from DeepSeek output."""
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     def _ollama_chat(self, messages: List[Dict], temperature: float = 0.0, num_predict: int = 400) -> str:
-        resp = ollama.chat(
-            model=self.ollama_model,
-            messages=messages,
-            options={"temperature": temperature, "num_predict": num_predict},
-        )
-        content = resp["message"]["content"] if isinstance(resp, dict) else resp.message.content
-        return self._clean_think(content)
-
-    # -------------------------
-    # Step-back + HyDE
-    # -------------------------
+        try:
+            resp = ollama.chat(
+                model=self.ollama_model,
+                messages=messages,
+                options={"temperature": temperature, "num_predict": num_predict},
+            )
+            content = resp["message"]["content"] if isinstance(resp, dict) else resp.message.content
+            return self._clean_think(content)
+        except Exception as e:
+            print(f"   ⚠️ Ollama Error: {e}")
+            return ""
 
     def _step_back_query(self, query: str) -> str:
-        prompt = f"""Rewrite the user question into a broader 'step-back' web-search question that helps find recent market-moving news.
-
-User question: {query}
-
-Rules:
-- Output ONE sentence.
-- Include timeframe hints like 'today', 'this week', 'recent' when relevant.
-- Avoid adding facts.
-"""
-        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=120)
+        prompt = f"""Rewrite: '{query}' into a broader search query for recent market news/catalysts.
+        Output ONE sentence. No quotes."""
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=100)
         return out.strip().strip('"')
 
     def _hyde_brief(self, query: str, prior_analysis: str = "") -> str:
-        prompt = f"""Write a hypothetical (fake) news brief (6-10 sentences) that would answer the user's question well.
-This is for search expansion only.
-
-User question: {query}
-
-If provided, you may use this prior context only to infer what topics to look for (do not treat as facts):
-{prior_analysis[:600]}
-
-Output:
-- Plain text only.
-- No citations.
-- Include likely keywords: company, products, catalysts, regulation, competitors, macro.
-"""
-        return self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.2, num_predict=350)
+        prompt = f"""Write a fake 3-sentence news brief answering: {query}
+        Use prior context if any: {prior_analysis[:300]}
+        Plain text only."""
+        return self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.2, num_predict=200)
 
     def _hyde_queries_from_brief(self, hyde_text: str, max_queries: int = 2) -> List[str]:
-        prompt = f"""Convert the hypothetical news brief into {max_queries} concise web search queries.
-
-Brief:
-{hyde_text}
-
-Rules:
-- Output valid JSON list of strings ONLY.
-- Example: ["Microsoft cloud revenue 2026", "Azure AI strategy risks"]
-- Each query <= 12 words.
-- Include timeframe hint (2025, 2026, today, Q1 2026) when relevant.
-"""
-        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=200)
-        
-        # Robust Parsing
+        prompt = f"""Extract {max_queries} search queries from this brief:
+        {hyde_text}
+        Output ONLY valid JSON list of strings."""
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=150)
         try:
-            # 1. Try finding JSON block
             match = re.search(r'\[.*\]', out, re.DOTALL)
             if match:
-                data = json.loads(match.group(0))
-                return [str(x) for x in data if isinstance(x, str)][:max_queries]
-            
-            # 2. Fallback: Split lines if JSON fails
-            lines = [l.strip().strip('- "') for l in out.splitlines() if l.strip()]
-            valid_lines = [l for l in lines if len(l) > 5 and not l.startswith('[')]
-            if valid_lines:
-                return valid_lines[:max_queries]
-            
-        except Exception as e:
-            print(f"   ⚠️ HyDE Parse Error: {e}")
-        
-        # 3. Ultimate Fallback
+                return json.loads(match.group(0))
+        except:
+            pass
         return [hyde_text[:80]] if hyde_text else []
-
-    # -------------------------
-    # Search + merge
-    # -------------------------
 
     def _tavily_search(self, query: str, max_results: int = 6) -> List[Dict]:
         if not query or len(query) < 3: return []
         try:
+            # Append "site:bloomberg.com OR site:reuters.com ..." to enforce domains? 
+            # Better to let Tavily search broadly then filter, unless query is very specific.
+            # For now, we search broadly to get max recall.
             resp = self.tavily.search(
                 query=query,
                 search_depth="advanced",
@@ -145,103 +104,24 @@ Rules:
             print(f"   ❌ Tavily search error: {e}")
             return []
 
-    def _dedupe_results(self, results: List[Dict]) -> List[Dict]:
+    def _is_trustworthy(self, url: str) -> bool:
+        """Filter results to only allow trusted financial news domains."""
+        if not url: return False
+        domain = url.lower().replace("https://", "").replace("http://", "").split('/')[0]
+        # Allow subdomains like www.bloomberg.com or finance.yahoo.com
+        return any(trusted in domain for trusted in self.TRUSTED_DOMAINS)
+
+    def _dedupe_and_filter(self, results: List[Dict]) -> List[Dict]:
         seen = set()
         out = []
         for r in results:
             url = (r.get("url") or "").strip()
-            key = url.lower() if url else (r.get("title") or "").strip().lower()
-            if not key or key in seen:
+            if not url or not self._is_trustworthy(url): 
                 continue
-            seen.add(key)
+            if url in seen: continue
+            seen.add(url)
             out.append(r)
         return out
-
-    # -------------------------
-    # Rerank (optional)
-    # -------------------------
-
-    def _cohere_rerank(self, query: str, results: List[Dict], top_n: int = 6) -> List[Dict]:
-        if not self.cohere_api_key or not results:
-            return results
-
-        docs = []
-        for r in results:
-            title = r.get("title") or ""
-            content = r.get("content") or ""
-            docs.append(f"{title}\n{content}"[:1500])
-
-        try:
-            payload = {
-                "model": "rerank-english-v3.0",
-                "query": query,
-                "documents": docs,
-                "top_n": min(top_n, len(docs)),
-            }
-            headers = {
-                "Authorization": f"Bearer {self.cohere_api_key}",
-                "Content-Type": "application/json",
-            }
-            resp = requests.post("https://api.cohere.com/v1/rerank", json=payload, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            order = [x["index"] for x in data.get("results", [])]
-            reranked = [results[i] for i in order if i < len(results)]
-            return reranked
-        except Exception as e:
-            print(f"   ⚠️ Cohere rerank failed, falling back to LLM rerank: {e}")
-            return results
-
-    def _llm_rerank(self, query: str, results: List[Dict], top_n: int = 6) -> List[Dict]:
-        if not results:
-            return []
-
-        # Keep short for speed
-        candidates = results[: min(len(results), 10)]
-        items = []
-        for i, r in enumerate(candidates):
-            items.append({
-                "i": i,
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "snippet": (r.get("content") or "")[:260],
-            })
-
-        prompt = f"""You are a reranker for equity research news.
-Rank the following search results for answering the query.
-
-Query: {query}
-
-Return JSON list of indices in best-first order.
-Results:
-{json.dumps(items, ensure_ascii=False)}
-"""
-        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=120)
-        try:
-            # Clean think tags again just in case
-            match = re.search(r'\[.*\]', out, re.DOTALL)
-            if match:
-                order = json.loads(match.group(0))
-                order = [int(x) for x in order if isinstance(x, (int, float, str))]
-                seen = set()
-                reranked = []
-                for idx in order:
-                    if idx in seen or idx < 0 or idx >= len(candidates):
-                        continue
-                    seen.add(idx)
-                    reranked.append(candidates[idx])
-                # append leftovers
-                for i in range(len(candidates)):
-                    if i not in seen:
-                        reranked.append(candidates[i])
-                return reranked[:top_n]
-        except Exception:
-            return candidates[:top_n]
-        return candidates[:top_n] # Fallback
-
-    # -------------------------
-    # Synthesis with citations
-    # -------------------------
 
     def _format_context(self, results: List[Dict]) -> Tuple[str, List[Dict]]:
         ctx = ""
@@ -250,110 +130,91 @@ Results:
             title = (r.get("title") or "Unknown").strip()
             url = (r.get("url") or "").strip()
             content = (r.get("content") or "").strip()
-            if not url:
-                continue
-            ctx += f"\n--- SOURCE: {title} ({url}) ---\n{content}\n"
+            if not url: continue
+            
+            # Formatting for the LLM
+            ctx += f"\n--- SOURCE: {title} ({url}) ---\n{content[:500]}...\n" # Limit content length
             citations.append({"title": title, "url": url, "content": content})
         return ctx.strip(), citations
 
     def _inject_citations(self, text: str, citations: List[Dict]) -> str:
-        if "--- SOURCE:" in text:
-            return text
-        if not citations:
-            return text
-
-        paras = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
+        if "--- SOURCE:" in text: return text
+        if not citations: return text
+        
+        # Simple injection strategy: append 1 citation per paragraph
+        paras = [p for p in text.split('\n\n') if len(p) > 50]
         out = []
-        ci = 0
-        for p in paras:
+        for i, p in enumerate(paras):
             out.append(p)
-            if ci < len(citations):
-                c = citations[ci]
+            if i < len(citations):
+                c = citations[i]
                 out.append(f"--- SOURCE: {c['title']} ({c['url']}) ---")
-                ci += 1
         return "\n\n".join(out)
 
     def _synthesize(self, query: str, context: str, citations: List[Dict], prior_analysis: str = "") -> str:
         current_date = datetime.now().strftime("%B %d, %Y")
-        prompt = f"""You are the News Desk for an equity research team.
-Date: {current_date}
-
-Task: Identify unknown-unknowns and recent catalysts relevant to the user's question.
-
-Rules:
-- Use ONLY the provided web context.
-- Write 4-7 short paragraphs.
-- After EVERY paragraph, append exactly one SOURCE line copied from the context in the form:
-  --- SOURCE: Title (URL) ---
-- If the context is insufficient, say what is missing.
-
-USER QUESTION:
-{query}
-
-WEB CONTEXT:
-{context}
-
-PRIOR (optional, treat as background, not as facts):
-{prior_analysis[:600]}
-"""
-        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=900)
-        out = self._inject_citations(out, citations)
+        prompt = f"""You are a Financial News Desk.
+        Date: {current_date}
+        
+        Task: Write a market update based on the Web Context below.
+        
+        Rules:
+        1. Use ONLY the provided Web Context.
+        2. Write 3-4 concise paragraphs.
+        3. After EVERY paragraph, add: --- SOURCE: Title (URL) ---
+        4. Focus on facts, numbers, dates.
+        
+        Question: {query}
+        
+        Web Context:
+        {context}
+        """
+        
+        out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=800)
+        
+        # Fallback if LLM fails to cite
+        if "--- SOURCE:" not in out:
+            out = self._inject_citations(out, citations)
+            
         return out
-
-    # -------------------------
-    # Public API
-    # -------------------------
 
     def analyze(self, query: str, prior_analysis: str = "", metadata: Dict = {}) -> str:
         print(f"\n🌐 News Desk analyzing: '{query}'")
-
+        
+        # 1. Generate Queries
         step_back = self._step_back_query(query)
         hyde = self._hyde_brief(query, prior_analysis)
         hyde_queries = self._hyde_queries_from_brief(hyde, max_queries=2)
-
-        # Always include a time-aware direct query too
+        
         year = datetime.now().year
-        # Use Metadata if available
         meta_years = metadata.get("years", [year])
         target_year = meta_years[0] if meta_years else year
+        direct = f"{query} news {target_year}"
         
-        direct = f"{query} latest news {target_year}"
-
-        print(f"   🧭 Step-back: {step_back}")
-        print(f"   🧪 HyDE queries: {hyde_queries}")
-
+        # 2. Search
+        queries = list(set([direct, step_back] + hyde_queries))
+        print(f"   🔍 Queries: {queries}")
+        
         all_results = []
-        queries_to_run = [direct, step_back] + hyde_queries
-        # Dedupe queries
-        queries_to_run = list(set([q for q in queries_to_run if q and len(q) > 3]))
-
-        for q in queries_to_run:
+        for q in queries:
             all_results.extend(self._tavily_search(q, max_results=5))
-
-        all_results = self._dedupe_results(all_results)
-
-        # Rerank
-        ranked = self._cohere_rerank(query, all_results, top_n=8)
-        if ranked == all_results:
-            ranked = self._llm_rerank(query, all_results, top_n=8)
-
-        context, citations = self._format_context(ranked)
-        if not citations:
-            return "## Web Research\n\nNo web results found."
-
-        analysis = self._synthesize(query, context, citations, prior_analysis)
-        return analysis
-
-    def test_connection(self) -> bool:
-        try:
-            self.tavily.search(query="test", max_results=1)
-            ollama.chat(model=self.ollama_model, messages=[{"role": "user", "content": "test"}], options={"num_predict": 10})
-            return True
-        except Exception as e:
-            print(f"❌ Connection failed: {e}")
-            return False
-
+            
+        # 3. Filter (Trustworthy Only)
+        filtered_results = self._dedupe_and_filter(all_results)
+        print(f"   ✅ Found {len(filtered_results)} trusted articles")
+        
+        # 4. Fallback if filtering removed everything
+        if not filtered_results and all_results:
+            print("   ⚠️ Strict filtering yielded 0 results. Relaxing filter.")
+            filtered_results = all_results[:3] # Take top 3 untrusted if necessary
+            
+        # 5. Synthesize
+        if not filtered_results:
+            return "## Web Research\n\nNo recent reliable news found."
+            
+        context, citations = self._format_context(filtered_results)
+        return self._synthesize(query, context, citations, prior_analysis)
 
 if __name__ == "__main__":
     agent = WebSearchAgent()
-    print(agent.analyze("Why is AAPL down today?"))
+    print(agent.analyze("Microsoft risks 2026"))
