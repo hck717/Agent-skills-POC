@@ -6,7 +6,7 @@ Rule-based orchestration with HYBRID LOCAL LLM synthesis:
 - DeepSeek-R1 8B: Deep reasoning for specialist analysis
 - Qwen 2.5 7B: Fast synthesis for final report combining
 
-Version: 2.3 - Added Business Analyst CRAG (v2) with Real DB Config
+Version: 2.4 - Graph Citation Support + Timeout Fix
 """
 
 import os
@@ -28,11 +28,6 @@ try:
 except ImportError:
     print("⚠️ Could not import BusinessAnalystCRAG. Ensure skills/business_analyst_crag exists.")
     BusinessAnalystCRAG = None
-
-# ... (rest of file remains same) ...
-
-# NOTE: I need to write the FULL content again to update the file properly. 
-# Since the previous content is very large, I will re-output the relevant parts and keep the rest intact by copy-pasting the known structure.
 
 class ActionType(Enum):
     """Types of actions the ReAct agent can take"""
@@ -360,17 +355,27 @@ class ReActOrchestrator:
             agent = output['agent']
             
             # Pattern 1: Document sources (filename + page)
+            # Matches: --- SOURCE: 10k.pdf (Page 55) ---
             pattern_doc = r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---'
             doc_sources = re.findall(pattern_doc, content, re.IGNORECASE)
             
             # Pattern 2: Web sources (title + URL)
+            # Matches: --- SOURCE: Title (http://...) ---
             pattern_web = r'---\s*SOURCE:\s*([^\(]+)\((https?://[^\)]+)\)\s*---'
             web_sources = re.findall(pattern_web, content, re.IGNORECASE)
+
+            # Pattern 3: Graph/Generic sources (Fallback)
+            # Matches: --- SOURCE: Entity (local graph) --- OR --- SOURCE: Neo4j (graph) ---
+            # Group 1: Entity Name
+            # Group 2: Context in parens (not starting with Page or http)
+            pattern_generic = r'---\s*SOURCE:\s*([^\(]+)\((?!Page|https?://)([^\)]+)\)\s*---'
+            generic_sources = re.findall(pattern_generic, content, re.IGNORECASE)
             
-            total_sources = len(doc_sources) + len(web_sources)
+            total_sources = len(doc_sources) + len(web_sources) + len(generic_sources)
             print(f"   🔍 DEBUG: Found {total_sources} SOURCE markers in {agent} output")
             print(f"      - Document sources: {len(doc_sources)}")
             print(f"      - Web sources: {len(web_sources)}")
+            print(f"      - Generic/Graph sources: {len(generic_sources)}")
             
             # Add document sources
             for filename, page in doc_sources:
@@ -392,6 +397,17 @@ class ReActOrchestrator:
                 if source_key not in document_sources.values():
                     document_sources[citation_num] = source_key
                     print(f"      [{citation_num}] {title[:60]}...")
+                    citation_num += 1
+            
+            # Add generic/graph sources
+            for name, context in generic_sources:
+                name = name.strip()
+                context = context.strip()
+                source_key = f"{name} ({context})"
+                
+                if source_key not in document_sources.values():
+                    document_sources[citation_num] = source_key
+                    print(f"      [{citation_num}] {source_key}")
                     citation_num += 1
         
         return document_sources
@@ -480,28 +496,44 @@ class ReActOrchestrator:
             content = output['result']
             
             def replace_source(match):
-                # Extract either (Page X) or (URL)
+                # Extract either (Page X) or (URL) or (Context)
                 full_match = match.group(0)
                 
-                # Try document pattern first
-                if "Page" in full_match:
-                    filename = match.group(1).strip()
-                    page = match.group(2).strip()
+                # Identify which pattern matched
+                source_key = None
+                
+                # Check if it matches Page pattern
+                page_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\(Page\s*([^\)]+)\)\s*---', full_match, re.IGNORECASE)
+                if page_match:
+                    filename = page_match.group(1).strip()
+                    page = page_match.group(2).strip()
                     source_key = f"{filename} - Page {page}"
                 else:
-                    # Web pattern
-                    title = match.group(1).strip()
-                    url = match.group(2).strip()
-                    source_key = f"{title}||{url}"
+                    # Check if it matches Web pattern
+                    web_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\((https?://[^\)]+)\)\s*---', full_match, re.IGNORECASE)
+                    if web_match:
+                        title = web_match.group(1).strip()
+                        url = web_match.group(2).strip()
+                        source_key = f"{title}||{url}"
+                    else:
+                        # Check generic pattern
+                        gen_match = re.search(r'---\s*SOURCE:\s*([^\(]+)\((?!Page|https?://)([^\)]+)\)\s*---', full_match, re.IGNORECASE)
+                        if gen_match:
+                            name = gen_match.group(1).strip()
+                            context = gen_match.group(2).strip()
+                            source_key = f"{name} ({context})"
                 
-                for num, doc in document_sources.items():
-                    if doc == source_key:
-                        return f" [SOURCE-{num}]"
+                if source_key:
+                    for num, doc in document_sources.items():
+                        if doc == source_key:
+                            return f" [SOURCE-{num}]"
+                
                 return match.group(0)
             
-            # Replace both patterns
+            # Replace all patterns in one go if possible, or iterative
+            # We use a broad pattern to catch the marker, then refine inside the callback
             content_with_cites = re.sub(
-                r'---\s*SOURCE:\s*([^\(]+)\(([^\)]+)\)\s*---',
+                r'---\s*SOURCE:\s*(.*?)\s*---',
                 replace_source,
                 content,
                 flags=re.IGNORECASE
@@ -669,7 +701,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
                 messages, 
                 temperature=0.15,  # Qwen performs well at lower temp for synthesis
                 num_predict=3500,  # Same token count
-                timeout=240        # 🔥 FIX 3: Increased from 180s to 240s (4 minutes)
+                timeout=600        # 🔥 FIX 3: Increased from 240s to 600s (10 minutes)
             )
             print("   ✅ Synthesis complete")
             
@@ -687,7 +719,7 @@ Cite OBSESSIVELY. Every claim, every number, every statement.
                     if "||" in doc:  # Web source
                         title, url = doc.split("||", 1)
                         refs += f"[{num}] {title} - {url}\n"
-                    else:  # Document source
+                    else:  # Document or Graph source
                         refs += f"[{num}] {doc}\n"
                 
                 final_report += refs
