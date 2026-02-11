@@ -1,5 +1,7 @@
 import streamlit as st
+import os
 import asyncio
+from dotenv import load_dotenv
 from orchestrator_react import ReActOrchestrator
 from skills.web_search_agent.agent import WebSearchAgent
 from skills.business_analyst_standard.agent import BusinessAnalystStandard
@@ -8,7 +10,8 @@ try:
 except ImportError:
     BusinessAnalystCRAG = None
 
-# ... (keep existing imports if any)
+# Load .env initially to populate defaults
+load_dotenv()
 
 def main():
     st.set_page_config(
@@ -26,7 +29,35 @@ def main():
     # Model Selection
     model_options = ["deepseek-r1:8b", "llama3", "mistral"]
     selected_model = st.sidebar.selectbox("Analysis Model", model_options, index=0)
-    
+
+    # 🔐 Database Credentials (UI Overrides)
+    with st.sidebar.expander("🔐 Database Credentials", expanded=False):
+        st.caption("Override .env defaults here")
+        
+        qdrant_url = st.text_input(
+            "Qdrant URL", 
+            value=os.getenv("QDRANT_URL", ""),
+            type="default",
+            placeholder="https://xyz.qdrant.io"
+        )
+        
+        qdrant_key = st.text_input(
+            "Qdrant API Key", 
+            value=os.getenv("QDRANT_API_KEY", ""),
+            type="password"
+        )
+        
+        neo4j_uri = st.text_input(
+            "Neo4j URI", 
+            value=os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        )
+        
+        neo4j_pass = st.text_input(
+            "Neo4j Password", 
+            value=os.getenv("NEO4J_PASSWORD", ""),
+            type="password"
+        )
+
     # Agent Selection
     st.sidebar.subheader("Active Agents")
     use_crag = st.sidebar.checkbox("Business Analyst CRAG (Deep Reader)", value=True, disabled=BusinessAnalystCRAG is None)
@@ -36,14 +67,6 @@ def main():
     if BusinessAnalystCRAG is None:
         st.sidebar.warning("BusinessAnalystCRAG not found/installed")
 
-    # Initialize Orchestrator
-    if 'orchestrator' not in st.session_state:
-        st.session_state.orchestrator = ReActOrchestrator(model=selected_model)
-        
-        # Register Agents based on selection
-        # Note: In a real app, you might want to dynamically register based on checkbox
-        # Here we register once on load for simplicity, or re-register on run
-        
     # Chat Interface
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -62,18 +85,24 @@ def main():
             full_response = ""
             
             # Re-initialize/Update orchestrator with current settings
+            # We initialize with the selected model
             orchestrator = ReActOrchestrator(model=selected_model)
             
-            # Register Selected Agents
+            # Register Selected Agents with UI Credentials
             if use_crag and BusinessAnalystCRAG:
-                orchestrator.register_specialist("business_analyst_crag", BusinessAnalystCRAG())
+                # Instantiate with UI values
+                crag_agent = BusinessAnalystCRAG(
+                    qdrant_url=qdrant_url if qdrant_url else None,
+                    qdrant_key=qdrant_key if qdrant_key else None,
+                    neo4j_uri=neo4j_uri,
+                    neo4j_pass=neo4j_pass
+                )
+                orchestrator.register_specialist("business_analyst_crag", crag_agent)
             
             if use_standard:
-                 # Assuming Standard Agent takes model as arg
                  orchestrator.register_specialist("business_analyst", BusinessAnalystStandard(model=selected_model))
             
             if use_web:
-                 # Web agent needs API key usually
                  try:
                     orchestrator.register_specialist("web_search_agent", WebSearchAgent())
                  except Exception as e:
