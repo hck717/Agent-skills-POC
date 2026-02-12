@@ -114,18 +114,18 @@ def test_neo4j_connection(**context):
 
 
 def test_qdrant_connection(**context):
-    """Test Qdrant Cloud connection"""
+    """Test Qdrant Cloud connection with extended timeout"""
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams
     
     logger.info(f"Testing Qdrant connection to {QDRANT_URL}")
     
     try:
-        # Connect to Qdrant
+        # Connect to Qdrant with extended timeout (60 seconds)
         if QDRANT_API_KEY:
-            client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+            client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
         else:
-            client = QdrantClient(url=QDRANT_URL)
+            client = QdrantClient(url=QDRANT_URL, timeout=60)
         
         logger.info("✅ Qdrant connected successfully!")
         
@@ -186,7 +186,7 @@ def test_api_keys(**context):
         logger.warning("⚠️ EODHD_API_KEY not set")
         results['eodhd'] = 'missing'
     
-    # Test FMP API
+    # Test FMP API (optional - gracefully handle 403)
     if FMP_API_KEY:
         try:
             url = f"https://financialmodelingprep.com/api/v3/quote/AAPL?apikey={FMP_API_KEY}"
@@ -194,6 +194,9 @@ def test_api_keys(**context):
             if response.status_code == 200 and response.json():
                 logger.info("✅ FMP API key valid")
                 results['fmp'] = 'valid'
+            elif response.status_code == 403:
+                logger.warning("⚠️ FMP API key exists but access denied (403) - may need paid tier")
+                results['fmp'] = 'limited_access'
             else:
                 logger.warning(f"⚠️ FMP API returned status {response.status_code}")
                 results['fmp'] = 'invalid'
@@ -201,7 +204,7 @@ def test_api_keys(**context):
             logger.error(f"❌ FMP API test failed: {str(e)}")
             results['fmp'] = 'error'
     else:
-        logger.warning("⚠️ FMP_API_KEY not set")
+        logger.warning("⚠️ FMP_API_KEY not set (optional)")
         results['fmp'] = 'missing'
     
     # Test Tavily API
@@ -236,7 +239,7 @@ def print_summary(**context):
     logger.info("")
     logger.info("API Keys:")
     for api, status in api_result.items():
-        emoji = "✅" if status == 'valid' or status == 'loaded' else "⚠️"
+        emoji = "✅" if status in ['valid', 'loaded', 'limited_access'] else "⚠️"
         logger.info(f"  {emoji} {api.upper()}: {status}")
     logger.info("="*70)
     logger.info("🎉 All connection tests completed!")
