@@ -1,5 +1,5 @@
-"""Web Search Agent - Supplements document analysis with current web information"""
+"""Web Search Agent - HyDE Enhanced with Step-Back Prompting and Corrective Filtering"""
 
-from .agent import WebSearchAgent
+from .agent_hyde import WebSearchAgentHyDE as WebSearchAgent
 
 __all__ = ['WebSearchAgent']

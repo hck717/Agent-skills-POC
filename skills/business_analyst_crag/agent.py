@@ -194,23 +194,42 @@ class BusinessAnalystCRAG:
             return f"Generation Error: {e}"
 
     def analyze(self, task: str, ticker: str = "AAPL", **kwargs) -> str:
-        print(f"🧠 [Deep Reader] Analyzing: {task} (Ticker: {ticker})")
+        print(f"🧠 [Deep Reader v4.1 HOTFIX] Analyzing: {task} (Ticker: {ticker})")
         print(f"   🔍 [Hybrid] Vector + Graph + Rerank...")
         
-        docs = self._query_graph_rag(ticker, task, k=3)
+        docs = self._query_graph_rag(ticker, task, k=5)  # Increased from 3 to 5
         status = self._evaluator(task, docs)
         print(f"   🔍 CRAG Status: {status}")
         
+        # HOTFIX: Handle AMBIGUOUS with query rewriting
+        if status == "AMBIGUOUS":
+            print(f"   🔄 [CRAG] Ambiguous result - attempting query simplification...")
+            # Simple rewrite: extract key terms
+            simple_query = task.replace("Analyze", "").replace("analyze", "")
+            simple_query = simple_query.replace("corresponding", "").strip()
+            print(f"   🔄 Simplified query: '{simple_query}'")
+            
+            # Retry with simplified query
+            docs_retry = self._query_graph_rag(ticker, simple_query, k=5)
+            status_retry = self._evaluator(simple_query, docs_retry)
+            print(f"   🔍 CRAG Status (retry): {status_retry}")
+            
+            # Use retry results if better
+            if status_retry in ["CORRECT", "AMBIGUOUS"]:
+                docs = docs_retry
+                status = status_retry
+        
         if status == "INCORRECT":
+            print(f"   ❌ [CRAG] Low confidence - recommend web fallback")
             return "CRAG_FALLBACK_REQUIRED"
             
         print("   📝 Generating Answer...")
         analysis = self._generate(task, docs)
         
         final_output = f"{analysis}\n\n"
-        for doc in docs:
+        for i, doc in enumerate(docs, 1):
             clean_doc = doc.replace("\n", " ").strip()[:200]
-            final_output += f"--- SOURCE: GRAPH FACT: {clean_doc}... (Internal) ---\n"
+            final_output += f"[{i}] GRAPH FACT: {clean_doc}...\n"
         return final_output
 
     def close(self):

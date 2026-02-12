@@ -79,40 +79,58 @@ Plain text only."""
         return self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.2, num_predict=220)
 
     def _hyde_queries_from_brief(self, hyde_text: str, max_queries: int = 2) -> List[str]:
-        prompt = f"""Extract {max_queries} search queries from this brief:
+        """HOTFIX: Simplified HyDE query extraction with better error handling."""
+        
+        # Skip HyDE if brief is empty or garbage
+        if not hyde_text or len(hyde_text) < 10:
+            return []
+        
+        prompt = f"""Extract {max_queries} specific search queries from this text:
 {hyde_text}
-Output ONLY valid JSON list of strings."""
+
+Output format: ["query 1", "query 2"]
+Output ONLY the JSON array, nothing else."""
+        
         out = self._ollama_chat([{"role": "user", "content": prompt}], temperature=0.0, num_predict=180)
 
         # Parse JSON list defensively
         queries: List[str] = []
         try:
-            match = re.search(r'\[.*\]', out, re.DOTALL)
+            match = re.search(r'\[.*?\]', out, re.DOTALL)
             if match:
                 parsed = json.loads(match.group(0))
                 if isinstance(parsed, list):
                     queries = [q for q in parsed if isinstance(q, str)]
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ HyDE JSON parsing failed: {e}")
+            # Fallback: extract from hyde_text directly
             queries = []
 
-        # Aggressive sanitization to avoid thought-residue / multiline junk
+        # ENHANCED sanitization to avoid thought-residue
         cleaned: List[str] = []
+        garbage_patterns = ['hmm', 'ores', 'okay', 'alright', 'sure', 'user wants', 'fake', 'halluc', 'create a']
+        
         for q in queries:
             q2 = q.replace("\n", " ").strip()
             q2 = re.sub(r"\s+", " ", q2)
-            # Drop garbage
-            if len(q2) < 6: 
+            
+            # Drop garbage patterns
+            if len(q2) < 6 or len(q2) > 150:
                 continue
-            if q2.lower().startswith("ores"):
+            
+            is_garbage = any(pattern in q2.lower() for pattern in garbage_patterns)
+            if is_garbage:
+                print(f"   🗑️ Filtered garbage query: {q2[:50]}...")
                 continue
-            if "fake" in q2.lower() or "halluc" in q2.lower():
-                continue
+                
             cleaned.append(q2)
 
         if cleaned:
             return cleaned[:max_queries]
 
-        return [hyde_text[:80].replace("\n", " ")] if hyde_text else []
+        # Ultimate fallback: return empty list (will skip HyDE)
+        print(f"   ⚠️ HyDE extraction failed, skipping HyDE queries")
+        return []
 
     def _tavily_search(self, query: str, max_results: int = 8) -> List[Dict]:
         if not query or len(query) < 3:
