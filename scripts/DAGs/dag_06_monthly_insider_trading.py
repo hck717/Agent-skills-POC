@@ -6,6 +6,8 @@ Purpose: Refresh insider transaction data
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+import sys
+sys.path.insert(0, '/opt/airflow/dags')
 import config
 
 def extract_eodhd_insider_transactions(**context):
@@ -33,7 +35,8 @@ def extract_eodhd_insider_transactions(**context):
             response.raise_for_status()
             data = response.json()
             
-            for transaction in 
+            # Fixed: complete the for loop
+            for transaction in data:
                 transaction['ticker'] = ticker
                 all_transactions.append(transaction)
                 
@@ -63,7 +66,8 @@ def extract_fmp_insider_trading(**context):
             response.raise_for_status()
             data = response.json()
             
-            for transaction in 
+            # Fixed: complete the for loop
+            for transaction in data:
                 transaction['ticker'] = ticker
                 all_transactions.append(transaction)
                 
@@ -156,13 +160,7 @@ def load_postgres_insider_transactions(**context):
         return True
     
     # Connect to Postgres
-    conn = psycopg2.connect(
-        host=config.POSTGRES_HOST,
-        port=config.POSTGRES_PORT,
-        dbname=config.POSTGRES_DB,
-        user=config.POSTGRES_USER,
-        password=config.POSTGRES_PASSWORD
-    )
+    conn = psycopg2.connect(config.POSTGRES_URL)
     cur = conn.cursor()
     
     # Create table if not exists
@@ -183,16 +181,6 @@ def load_postgres_insider_transactions(**context):
             UNIQUE(ticker, transaction_date, owner_name, transaction_type)
         )
     """)
-    
-    # Create TimescaleDB hypertable (if TimescaleDB extension is available)
-    try:
-        cur.execute("""
-            SELECT create_hypertable('insider_transactions', 'transaction_date', 
-                                   if_not_exists => TRUE,
-                                   migrate_data => TRUE)
-        """)
-    except Exception as e:
-        print(f"Note: Could not create hypertable (normal if TimescaleDB not installed): {e}")
     
     # Prepare data for insertion
     insert_data = [
@@ -234,7 +222,7 @@ def load_postgres_insider_transactions(**context):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS insider_aggregates (
             ticker VARCHAR(10),
-            quarter VARCHAR(7),  -- Format: 2026-Q1
+            quarter VARCHAR(7),
             total_buys BIGINT,
             total_sells BIGINT,
             buy_value NUMERIC,
@@ -257,13 +245,7 @@ def calculate_insider_sentiment_score(**context):
     import psycopg2
     
     # Connect to Postgres
-    conn = psycopg2.connect(
-        host=config.POSTGRES_HOST,
-        port=config.POSTGRES_PORT,
-        dbname=config.POSTGRES_DB,
-        user=config.POSTGRES_USER,
-        password=config.POSTGRES_PASSWORD
-    )
+    conn = psycopg2.connect(config.POSTGRES_URL)
     cur = conn.cursor()
     
     # Calculate quarterly aggregates
@@ -304,10 +286,10 @@ default_args = config.DEFAULT_ARGS.copy()
 default_args.update({"start_date": datetime(2026, 1, 1)})
 
 with DAG(
-    dag_id="dag_06_monthly_insider_trading_pipeline",
+    dag_id="06_monthly_insider_trading",
     default_args=default_args,
     description="Refresh insider transaction data",
-    schedule_interval="0 3 1 * *",  # 1st of month at 3 AM HKT
+    schedule_interval="0 3 1 * *",
     catchup=False,
     max_active_runs=1,
     tags=["monthly", "insider_trading", "form_4"],
