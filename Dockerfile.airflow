@@ -14,7 +14,11 @@ RUN pip install --no-cache-dir \
     neo4j==6.1.0 \
     qdrant-client==1.16.2 \
     requests==2.31.0 \
-    pandas==2.1.4
+    pandas==2.1.4 \
+    duckdb==1.0.0 \
+    feedparser==6.0.11 \
+    openai==1.12.0 \
+    scipy==1.11.4
 
 # Upgrade pip
 RUN python -m pip install --upgrade pip
