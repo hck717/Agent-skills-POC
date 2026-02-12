@@ -20,10 +20,10 @@ import requests
 from dotenv import load_dotenv
 
 try:
-    from scripts.seed_neo4j_ba_graph import seed
+    from scripts.ingest_documents_ba import DocumentIngester
 except ImportError:
-    seed = None
-    print("⚠️ Could not import seed script. Auto-seeding disabled.")
+    DocumentIngester = None
+    print("⚠️ Could not import DocumentIngester. Auto-ingestion disabled.")
 
 load_dotenv()
 
@@ -139,12 +139,24 @@ class ReActOrchestrator:
         self.current_ticker = None
         self.current_metadata = {}
 
+        # Initialize Web Search Agent first (for CRAG fallback)
+        web_agent = None
+        if WebSearchAgent:
+            try:
+                web_agent = WebSearchAgent()
+                self.register_specialist("web_search_agent", web_agent)
+                print("✅ Web Search Agent initialized for CRAG fallback")
+            except Exception as e:
+                print(f"⚠️ Web Search Agent init failed: {e}")
+        
+        # Initialize Business Analyst with web fallback
         if BusinessAnalystCRAG:
             try:
                 self.register_specialist("business_analyst_crag", BusinessAnalystCRAG(
                     neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
                     neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
-                    neo4j_pass=os.getenv("NEO4J_PASSWORD", "password")
+                    neo4j_pass=os.getenv("NEO4J_PASSWORD", "password"),
+                    web_search_agent=web_agent  # Enable CRAG fallback chain
                 ))
             except Exception as e:
                 print(f"⚠️ Failed to auto-register business_analyst_crag: {e}")
@@ -223,23 +235,33 @@ class ReActOrchestrator:
             return ticker if ticker else "AAPL", {}
 
     def _auto_seed_graph(self, ticker: str, callback: Optional[Callable] = None):
-        if not seed: return
+        """Auto-clean and re-ingest documents on every query"""
+        if not DocumentIngester: return
         data_path = os.path.join("data", ticker)
         
         if not os.path.exists(data_path):
             print(f"   ⚠️ No local data found for {ticker} in {data_path}")
-            if callback: callback("Graph Seeding", f"No data for {ticker}", "error")
+            if callback: callback("Graph Ingestion", f"No data for {ticker}", "error")
             return
 
-        if callback: callback("Graph Seeding", f"Resetting & Ingesting {ticker}...", "running")
+        if callback: callback("Graph Ingestion", f"Cleaning & Ingesting {ticker}...", "running")
         try:
-            seed(os.getenv("NEO4J_URI", "bolt://localhost:7687"), 
-                 os.getenv("NEO4J_USER", "neo4j"), 
-                 os.getenv("NEO4J_PASSWORD", "password"), 
-                 ticker, reset=True)
-            if callback: callback("Graph Seeding", f"✅ Graph Ready ({ticker})", "complete")
+            # Create ingester
+            ingester = DocumentIngester(
+                neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+                neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
+                neo4j_pass=os.getenv("NEO4J_PASSWORD", "password"),
+                ticker=ticker
+            )
+            
+            # Always reset=True to clean and re-ingest
+            # max_chunks=20 for quick ingestion (remove for full)
+            ingester.ingest(reset=True, max_chunks=20)
+            
+            if callback: callback("Graph Ingestion", f"✅ Graph Ready ({ticker})", "complete")
         except Exception as e:
-            if callback: callback("Graph Seeding", f"Failed: {str(e)}", "error")
+            print(f"   ❌ Ingestion failed: {e}")
+            if callback: callback("Graph Ingestion", f"Failed: {str(e)}", "error")
 
     def _reason_rule_based(self, user_query: str, iteration: int, callback: Optional[Callable] = None) -> Action:
         if callback: callback(f"Iteration {iteration}", "Reasoning (Rule-Based)", "running")

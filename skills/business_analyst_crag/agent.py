@@ -18,10 +18,11 @@ class BusinessAnalystCRAG:
     3. Generation: Insight-focused Prompt
     """
     
-    def __init__(self, neo4j_uri, neo4j_user, neo4j_pass, llm_url="http://localhost:11434"):
+    def __init__(self, neo4j_uri, neo4j_user, neo4j_pass, llm_url="http://localhost:11434", web_search_agent=None):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_pass))
         self.llm_url = f"{llm_url}/api/chat"
         self.model = "deepseek-r1:8b"
+        self.web_search_agent = web_search_agent  # Web fallback for low-confidence retrieval
         
         # 1. Bi-Encoder for Embeddings (Vector Search)
         # 384 dimensions matching standard MiniLM
@@ -33,7 +34,7 @@ class BusinessAnalystCRAG:
         # 3. Initialize/Check Vector Index in Neo4j
         self._init_vector_index()
         
-        print(f"✅ Business Analyst (Deep Reader v4) initialized")
+        print(f"✅ Business Analyst (Deep Reader v4.2 - Full CRAG) initialized")
         print(f"   - Model: {self.model}")
         print(f"   - Vector Index: 'chunk_embedding' (checked)")
 
@@ -95,6 +96,7 @@ class BusinessAnalystCRAG:
         vector_cypher_simple = """
         CALL db.index.vector.queryNodes('chunk_embedding', 15, $embedding)
         YIELD node, score
+        WHERE node.ticker CONTAINS $ticker
         RETURN node.text AS text, score
         """
         
@@ -104,7 +106,7 @@ class BusinessAnalystCRAG:
                 # For robustness in this script, we'll use the simple vector query 
                 # (assuming data is mostly relevant or relying on reranker to filter)
                 # In prod, ALWAYS filter by metadata (ticker).
-                res = session.run(vector_cypher_simple, embedding=query_embedding)
+                res = session.run(vector_cypher_simple, embedding=query_embedding, ticker=ticker)
                 candidates.extend([r["text"] for r in res])
             except Exception as e:
                 print(f"⚠️ Vector Search Failed: {e}")
@@ -134,37 +136,56 @@ class BusinessAnalystCRAG:
         candidates = list(set(candidates))
         if not candidates: return []
         
-        # --- D. BM25 Scoring (Sparse) ---
-        # We'll use BM25 to boost the Cross-Encoder, or just trust Cross-Encoder?
-        # Standard approach: weighted sum. 
-        # Here, we'll keep it simple: Pass ALL candidates to Cross-Encoder. 
-        # BM25 is useful if we had 1000s of candidates. With ~20, Cross-Encoder is fast enough.
-        # But user requested BM25. Let's use it to pre-filter if we had too many.
-        # Since we have < 30, we will just print the top BM25 match for debugging.
-        
+        # --- D. BM25 Scoring (Sparse) - INTEGRATED ---
+        bm25_scores = [0.0] * len(candidates)
         try:
-            bm25_scores = self._bm25_score(query_text, candidates)
-            # We could use this to filter, but let's rely on Cross-Encoder for final rank.
-        except:
-            pass
+            bm25_raw = self._bm25_score(query_text, candidates)
+            # Normalize BM25 to 0-1 range
+            max_bm25 = max(bm25_raw) if len(bm25_raw) > 0 and max(bm25_raw) > 0 else 1.0
+            bm25_scores = [s / max_bm25 for s in bm25_raw]
+            print(f"   📊 BM25: Top score = {max(bm25_scores):.3f}")
+        except Exception as e:
+            print(f"   ⚠️ BM25 scoring failed: {e}")
 
         # --- E. Cross-Encoder Reranking (Final) ---
         pairs = [[query_text, doc] for doc in candidates]
-        scores = self.reranker.predict(pairs)
+        cross_scores = self.reranker.predict(pairs)
         
-        scored_docs = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-        top_k = [doc for doc, score in scored_docs[:k] if score > -10.0]
+        # Hybrid scoring: 30% BM25 (sparse) + 70% Cross-Encoder (semantic)
+        final_scores = [
+            0.3 * bm25_scores[i] + 0.7 * cross_scores[i]
+            for i in range(len(candidates))
+        ]
+        
+        scored_docs = sorted(zip(candidates, final_scores), key=lambda x: x[1], reverse=True)
+        print(f"   🎯 Hybrid Ranking: Top scores = {[f'{s:.3f}' for _, s in scored_docs[:3]]}")
+        top_k = [doc for doc, score in scored_docs[:k]]
         
         return top_k
 
     def _evaluator(self, query: str, retrieved_docs: List[str]) -> str:
-        if not retrieved_docs: return "INCORRECT"
+        """CRAG Evaluator with spec-compliant thresholds.
+        
+        Returns:
+            CORRECT: score > 0.7 (use directly)
+            AMBIGUOUS: 0.5 <= score <= 0.7 (rewrite query)
+            INCORRECT: score < 0.5 (trigger web fallback)
+        """
+        if not retrieved_docs:
+            print(f"   ❌ CRAG: No documents retrieved")
+            return "INCORRECT"
+        
         top_doc = retrieved_docs[0]
         score = self.reranker.predict([[query, top_doc]])[0]
         print(f"   📊 CRAG Confidence Score: {score:.4f}")
-        if score > 0.4: return "CORRECT" # Slightly lower threshold for POC
-        elif score > 0.0: return "AMBIGUOUS"
-        else: return "INCORRECT"
+        
+        # Spec-compliant thresholds
+        if score > 0.7:
+            return "CORRECT"
+        elif score >= 0.5:
+            return "AMBIGUOUS"
+        else:
+            return "INCORRECT"
 
     def _generate(self, query: str, context: List[str]) -> str:
         joined_context = "\n".join(context)[:6000]
@@ -193,43 +214,111 @@ class BusinessAnalystCRAG:
         except Exception as e:
             return f"Generation Error: {e}"
 
-    def analyze(self, task: str, ticker: str = "AAPL", **kwargs) -> str:
-        print(f"🧠 [Deep Reader v4.1 HOTFIX] Analyzing: {task} (Ticker: {ticker})")
-        print(f"   🔍 [Hybrid] Vector + Graph + Rerank...")
+    def _rewrite_query(self, original_query: str, context_hint: str) -> str:
+        """Use LLM to rewrite ambiguous queries with context."""
+        prompt = f"""You are a query optimization expert. Rewrite this query to be more specific based on the context hint.
+
+Original Query: {original_query}
+Context Hint: {context_hint[:300]}...
+
+Rules:
+1. Keep the core intent
+2. Add specific keywords from context
+3. Remove vague terms like "analyze", "corresponding"
+4. Output ONLY the rewritten query (one line)
+5. NO explanations
+
+Rewritten Query:"""
         
-        docs = self._query_graph_rag(ticker, task, k=5)  # Increased from 3 to 5
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.0, "num_predict": 100}
+        }
+        try:
+            response = requests.post(self.llm_url, json=payload, timeout=10)
+            response.raise_for_status()
+            content = response.json()["message"]["content"]
+            # Clean thinking tags and extract first line
+            clean = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            rewritten = clean.split('\n')[0].strip()
+            return rewritten if len(rewritten) > 5 else original_query
+        except Exception as e:
+            print(f"   ⚠️ Query rewrite failed: {e}")
+            return original_query
+
+
+    def analyze(self, task: str, ticker: str = "AAPL", **kwargs) -> str:
+        """Complete CRAG pipeline with spec-compliant evaluation.
+        
+        Pipeline:
+        1. Hybrid retrieval (Vector + Graph + BM25)
+        2. CRAG evaluation (CORRECT/AMBIGUOUS/INCORRECT)
+        3. Adaptive handling:
+           - CORRECT (>0.7): Use directly
+           - AMBIGUOUS (0.5-0.7): Rewrite query & retry
+           - INCORRECT (<0.5): Trigger web fallback
+        """
+        print(f"🧠 [Deep Reader v4.2 - Full CRAG] Analyzing: {task} (Ticker: {ticker})")
+        print(f"   🔍 [Hybrid] Vector + Graph + BM25 + Cross-Encoder...")
+        
+        # Phase 1: Initial Retrieval
+        docs = self._query_graph_rag(ticker, task, k=5)
         status = self._evaluator(task, docs)
         print(f"   🔍 CRAG Status: {status}")
         
-        # HOTFIX: Handle AMBIGUOUS with query rewriting
+        # Phase 2: Handle AMBIGUOUS (0.5-0.7) - Adaptive Query Rewriting
         if status == "AMBIGUOUS":
-            print(f"   🔄 [CRAG] Ambiguous result - attempting query simplification...")
-            # Simple rewrite: extract key terms
-            simple_query = task.replace("Analyze", "").replace("analyze", "")
-            simple_query = simple_query.replace("corresponding", "").strip()
-            print(f"   🔄 Simplified query: '{simple_query}'")
+            print(f"   🔄 [CRAG] Ambiguous confidence - rewriting query with LLM...")
+            context_hint = docs[0] if docs else ""
+            rewritten_query = self._rewrite_query(task, context_hint)
+            print(f"   🔄 Rewritten: '{rewritten_query}'")
             
-            # Retry with simplified query
-            docs_retry = self._query_graph_rag(ticker, simple_query, k=5)
-            status_retry = self._evaluator(simple_query, docs_retry)
+            # Retry with rewritten query
+            docs_retry = self._query_graph_rag(ticker, rewritten_query, k=5)
+            status_retry = self._evaluator(rewritten_query, docs_retry)
             print(f"   🔍 CRAG Status (retry): {status_retry}")
             
-            # Use retry results if better
+            # Use retry if improved
             if status_retry in ["CORRECT", "AMBIGUOUS"]:
                 docs = docs_retry
                 status = status_retry
+                task = rewritten_query  # Use rewritten for generation
         
+        # Phase 3: Handle INCORRECT (<0.5) - Web Fallback
         if status == "INCORRECT":
-            print(f"   ❌ [CRAG] Low confidence - recommend web fallback")
-            return "CRAG_FALLBACK_REQUIRED"
-            
-        print("   📝 Generating Answer...")
+            if self.web_search_agent:
+                print(f"   🌐 [CRAG] Low confidence - triggering Web Search fallback...")
+                try:
+                    web_result = self.web_search_agent.analyze(
+                        query=task,
+                        prior_analysis="",
+                        metadata={"years": [2026], "topics": ["Business Analysis"]},
+                        use_hyde=True,
+                        use_step_back=True,
+                        top_n=3
+                    )
+                    print(f"   ✅ [CRAG] Web fallback successful")
+                    # Prepend header to indicate web source
+                    return f"## External Intelligence (Web Search Fallback)\n\n{web_result}"
+                except Exception as e:
+                    print(f"   ❌ [CRAG] Web fallback failed: {e}")
+                    return f"## Analysis Unavailable\n\nInsufficient graph context and web fallback failed. Error: {e}"
+            else:
+                print(f"   ❌ [CRAG] Low confidence - no web agent configured")
+                return "CRAG_FALLBACK_REQUIRED"
+        
+        # Phase 4: Generate Answer from Retrieved Context
+        print("   📝 Generating Answer from Graph Context...")
         analysis = self._generate(task, docs)
         
+        # Phase 5: Append Source Citations
         final_output = f"{analysis}\n\n"
         for i, doc in enumerate(docs, 1):
             clean_doc = doc.replace("\n", " ").strip()[:200]
             final_output += f"[{i}] GRAPH FACT: {clean_doc}...\n"
+        
         return final_output
 
     def close(self):
