@@ -7,6 +7,8 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__WORKERS: 1
+      AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 0
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
@@ -21,13 +23,14 @@ services:
       - ./scripts/DAGs:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
-    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests && airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && airflow webserver"
+    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests && airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && airflow webserver --port 8080 --workers 1 --workerclass sync --worker-tmp-dir /dev/shm"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 300s
 
   airflow-scheduler:
     image: apache/airflow:2.8.1-python3.11
@@ -49,7 +52,7 @@ services:
       - ./scripts/DAGs:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
-    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests && airflow scheduler"
+    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests && sleep 30 && airflow scheduler"
     depends_on:
       airflow-webserver:
         condition: service_started
