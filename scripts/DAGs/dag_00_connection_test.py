@@ -26,11 +26,11 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 def test_postgres_connection(**context):
-    """Test PostgreSQL connection (Neon/Supabase)"""
+    """Test PostgreSQL connection (Local or Cloud)"""
     import psycopg2
     from psycopg2 import sql
     
-    logger.info(f"Testing Postgres connection to {POSTGRES_HOST}:{POSTGRES_PORT}")
+    logger.info(f"Testing Postgres connection to {POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
     
     try:
         # Connect to database (no timeout)
@@ -73,7 +73,7 @@ def test_postgres_connection(**context):
 
 
 def test_neo4j_connection(**context):
-    """Test Neo4j Aura connection"""
+    """Test Neo4j connection (Local or Cloud)"""
     from neo4j import GraphDatabase
     
     logger.info(f"Testing Neo4j connection to {NEO4J_URI}")
@@ -114,7 +114,7 @@ def test_neo4j_connection(**context):
 
 
 def test_qdrant_connection(**context):
-    """Test Qdrant Cloud connection with NO timeout"""
+    """Test Qdrant connection (Local or Cloud)"""
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams
     
@@ -149,9 +149,10 @@ def test_qdrant_connection(**context):
             else:
                 raise
         
-        # Get collection info
+        # Get collection info (use points_count, not vectors_count - API changed)
         info = client.get_collection(test_collection)
-        logger.info(f"   Collection vectors: {info.vectors_count}")
+        points = info.points_count if hasattr(info, 'points_count') else 0
+        logger.info(f"   Collection points: {points}")
         
         return {"status": "success", "collections": len(collections.collections)}
         
@@ -252,7 +253,7 @@ def print_summary(**context):
 with DAG(
     dag_id='00_connection_test',
     default_args=DEFAULT_ARGS,
-    description='Test all cloud database connections and API keys',
+    description='Test all database connections and API keys',
     schedule_interval=None,  # Manual trigger only
     start_date=datetime(2026, 1, 1),
     catchup=False,
