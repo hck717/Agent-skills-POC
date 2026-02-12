@@ -1,11 +1,24 @@
 services:
   airflow-webserver:
-    image: apache/airflow:2.8.1-python3.11
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow_webserver
     env_file: .env
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      # Increase timeout for slow Neon database connection from HK
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: 600
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 600
+      # Database connection pool settings for remote database
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 10
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 3600
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 20
+      # Reduce DAG parsing frequency to minimize DB queries
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
+      AIRFLOW__CORE__PARALLELISM: 32
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 16
       TEST_MODE: "true"
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
@@ -22,16 +35,33 @@ services:
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
       - ./airflow.cfg:/opt/airflow/airflow.cfg:ro
-    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests pandas && airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && exec airflow webserver"
+    command: bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && exec airflow webserver"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
     restart: unless-stopped
 
   airflow-scheduler:
-    image: apache/airflow:2.8.1-python3.11
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow_scheduler
     env_file: .env
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      # Database connection pool settings
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 10
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 3600
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 20
+      # Scheduler optimization for remote database
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 120
+      AIRFLOW__CORE__PARALLELISM: 32
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 16
       TEST_MODE: "true"
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
@@ -46,9 +76,16 @@ services:
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
       - ./airflow.cfg:/opt/airflow/airflow.cfg:ro
-    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests pandas && sleep 60 && airflow scheduler"
+    command: bash -c "sleep 120 && airflow scheduler"
     depends_on:
-      - airflow-webserver
+      airflow-webserver:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "airflow scheduler"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
 networks:
