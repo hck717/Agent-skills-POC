@@ -70,7 +70,7 @@ def extract_fmp_insider_trading(**context):
             response.raise_for_status()
             data = response.json()
             
-            for txn in data[:50]:  # Limit to recent
+            for txn in data[:50]:
                 transactions_data.append({
                     'ticker': ticker,
                     'transaction_date': txn.get('filingDate'),
@@ -102,7 +102,6 @@ def transform_insider_data(**context):
     df['transaction_date'] = pd.to_datetime(df['transaction_date'], errors='coerce')
     df = df.dropna(subset=['transaction_date'])
     
-    # Classify transaction types
     def classify_txn(row):
         txn_type = str(row['transaction_type']).lower()
         if 'buy' in txn_type or 'purchase' in txn_type:
@@ -118,9 +117,11 @@ def transform_insider_data(**context):
     
     df['txn_class'] = df.apply(classify_txn, axis=1)
     
-    # Detect clusters: multiple insiders within 7-day window
     df = df.sort_values(['ticker', 'transaction_date'])
     df['cluster'] = (df.groupby('ticker')['transaction_date'].diff().dt.days > 7).cumsum()
+    
+    # FIX: Convert pandas Timestamp to string for XCom serialization
+    df['transaction_date'] = df['transaction_date'].dt.strftime('%Y-%m-%d')
     
     transformed_data = df.to_dict('records')
     context['ti'].xcom_push(key='transformed_data', value=transformed_data)
@@ -197,7 +198,6 @@ def calculate_insider_sentiment_score(**context):
     
     sentiment_data = cursor.fetchall()
     
-    # Create insider_sentiment table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS insider_sentiment (
             ticker VARCHAR(10),
@@ -231,12 +231,11 @@ def calculate_insider_sentiment_score(**context):
     logger.info(f"✅ Calculated sentiment for {len(sentiment_data)} ticker-quarters")
     return {"calculated": len(sentiment_data)}
 
-# DAG DEFINITION
 with DAG(
     dag_id='06_monthly_insider_trading_pipeline',
     default_args=DEFAULT_ARGS,
     description='Monthly insider transaction data refresh',
-    schedule_interval='0 19 1 * *' if not TEST_MODE else None,  # 1st of month, 3 AM HKT
+    schedule_interval='0 19 1 * *' if not TEST_MODE else None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=MAX_ACTIVE_RUNS,
