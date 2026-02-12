@@ -1,4 +1,31 @@
 services:
+  # ============================================================================
+  # QDRANT VECTOR DATABASE (Local Development)
+  # ============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      # Optional: Set service configuration
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - equity_network
+
+  # ============================================================================
+  # AIRFLOW WEBSERVER
+  # ============================================================================
   airflow-webserver:
     build:
       context: .
@@ -23,8 +50,8 @@ services:
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      QDRANT_URL: ${QDRANT_URL}
-      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       EODHD_API_KEY: ${EODHD_API_KEY}
       FMP_API_KEY: ${FMP_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
@@ -36,6 +63,9 @@ services:
       - ./data:/opt/airflow/data
       - ./airflow.cfg:/opt/airflow/airflow.cfg:ro
     command: bash -c "airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && exec airflow webserver"
+    depends_on:
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -43,7 +73,12 @@ services:
       retries: 5
       start_period: 120s
     restart: unless-stopped
+    networks:
+      - equity_network
 
+  # ============================================================================
+  # AIRFLOW SCHEDULER
+  # ============================================================================
   airflow-scheduler:
     build:
       context: .
@@ -66,8 +101,8 @@ services:
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      QDRANT_URL: ${QDRANT_URL}
-      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       EODHD_API_KEY: ${EODHD_API_KEY}
       FMP_API_KEY: ${FMP_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
@@ -80,6 +115,8 @@ services:
     depends_on:
       airflow-webserver:
         condition: service_started
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "pgrep", "-f", "airflow scheduler"]
       interval: 30s
@@ -87,7 +124,20 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    networks:
+      - equity_network
 
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  qdrant_data:
+    name: qdrant_data
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
 networks:
-  default:
+  equity_network:
     name: equity_network
+    driver: bridge
