@@ -107,8 +107,18 @@ def extract_splits_dividends(**context):
 
 # TRANSFORMATION
 def transform_price_data(**context):
+    # FIX: Pull from FMP task which contains merged data from both EODHD and FMP
     prices_data = context['ti'].xcom_pull(task_ids='extract_fmp_eod_prices', key='prices_data')
+    
+    # Fallback to EODHD data if FMP didn't push anything
+    if not prices_data:
+        prices_data = context['ti'].xcom_pull(task_ids='extract_eodhd_eod_prices', key='prices_data') or []
+    
     logger.info(f"Transforming {len(prices_data)} price records")
+    
+    if not prices_data:
+        logger.error("No price data available for transformation")
+        raise ValueError("No price data to transform")
     
     df = pd.DataFrame(prices_data)
     df['date'] = pd.to_datetime(df['date'])
