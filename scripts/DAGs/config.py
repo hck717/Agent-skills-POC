@@ -1,187 +1,131 @@
 """
-Shared configuration for all Airflow DAGs - CLOUD + LOCAL HYBRID VERSION
-Supports both local Docker databases and cloud services (Neon, Neo4j Aura, Qdrant Cloud)
+Airflow DAGs Configuration
+Centralized config for all 13 data pipelines
 """
 from datetime import timedelta
 import os
-from pathlib import Path
-from urllib.parse import urlparse
 
 # ============================================================================
-# TEST MODE CONFIGURATION
-# ============================================================================
-TEST_MODE = os.getenv('TEST_MODE', 'true').lower() == 'true'
-
-if TEST_MODE:
-    print("⚠️  TEST MODE ENABLED - Using minimal data for faster testing")
-
-# ============================================================================
-# PATHS (Inside Docker containers)
-# ============================================================================
-STORAGE_ROOT = Path(os.getenv('STORAGE_ROOT', '/opt/airflow/storage'))
-DATA_ROOT = Path(os.getenv('DATA_ROOT', '/opt/airflow/data'))
-
-# DuckDB storage path
-DUCKDB_PATH = os.getenv('DUCKDB_PATH', '/opt/airflow/data/duckdb')
-
-# Neo4j import path (for CSV imports)
-NEO4J_IMPORT_PATH = DATA_ROOT / "neo4j_imports"
-
-# ============================================================================
-# API KEYS
-# ============================================================================
-EODHD_API_KEY = os.getenv("EODHD_API_KEY", "")
-FMP_API_KEY = os.getenv("FMP_API_KEY", "")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-
-# API Endpoints
-EODHD_BASE_URL = "https://eodhistoricaldata.com/api"
-FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
-
-# ============================================================================
-# DATABASE CONNECTIONS (Cloud-ready with local fallback)
+# ENVIRONMENT SETTINGS
 # ============================================================================
 
-# PostgreSQL - Supports both Neon/Supabase (cloud) and local Docker
-POSTGRES_URL = os.getenv('POSTGRES_URL')
+TEST_MODE = os.getenv('AIRFLOW_TEST_MODE', 'True').lower() == 'true'
+MAX_ACTIVE_RUNS = 1
 
-if POSTGRES_URL:
-    # Parse cloud connection URL
-    parsed = urlparse(POSTGRES_URL)
-    POSTGRES_HOST = parsed.hostname
-    POSTGRES_PORT = parsed.port or 5432
-    POSTGRES_DB = parsed.path.lstrip('/')
-    POSTGRES_USER = parsed.username
-    POSTGRES_PASSWORD = parsed.password
-else:
-    # Local Docker fallback
-    POSTGRES_HOST = os.getenv('POSTGRES_HOST', 'postgres')
-    POSTGRES_PORT = int(os.getenv('POSTGRES_PORT', 5432))
-    POSTGRES_DB = os.getenv('POSTGRES_DB', 'equity_research')
-    POSTGRES_USER = os.getenv('POSTGRES_USER', 'airflow')
-    POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'airflow')
-    POSTGRES_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+# ============================================================================
+# DEFAULT AIRFLOW ARGS
+# ============================================================================
 
-# Neo4j - Supports both Neo4j Aura (cloud) and local Docker
-NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://neo4j:7687')
+DEFAULT_ARGS = {
+    'owner': 'data_engineering',
+    'depends_on_past': False,
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5),
+}
+
+# ============================================================================
+# UNIVERSE DEFINITION
+# ============================================================================
+
+DEFAULT_TICKERS = [
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 
+    'META', 'TSLA', 'BRK.B', 'JNJ', 'V',
+    'JPM', 'WMT', 'PG', 'MA', 'UNH',
+    'DIS', 'NFLX', 'PYPL', 'ADBE', 'CRM'
+]
+
+# ============================================================================
+# DATABASE CONNECTIONS
+# ============================================================================
+
+# Postgres
+POSTGRES_URL = os.getenv(
+    'POSTGRES_URL',
+    'postgresql://postgres:postgres@localhost:5432/financial_data'
+)
+
+# Neo4j
+NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
 NEO4J_USER = os.getenv('NEO4J_USER', 'neo4j')
-NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'neo4j_password')
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
 
-# Detect if using cloud Neo4j Aura (neo4j+s:// protocol)
-IS_NEO4J_CLOUD = NEO4J_URI.startswith('neo4j+s://')
+# Qdrant
+QDRANT_URL = os.getenv('QDRANT_URL', 'http://localhost:6333')
+QDRANT_API_KEY = os.getenv('QDRANT_API_KEY', '')
 
-# Qdrant - Supports both Qdrant Cloud and local Docker
-QDRANT_URL = os.getenv('QDRANT_URL')
-QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
-
-if not QDRANT_URL:
-    # Local Docker fallback
-    QDRANT_HOST = os.getenv('QDRANT_HOST', 'qdrant')
-    QDRANT_PORT = int(os.getenv('QDRANT_PORT', 6333))
-    QDRANT_URL = f'http://{QDRANT_HOST}:{QDRANT_PORT}'
-    QDRANT_API_KEY = None  # Local Qdrant doesn't need API key
-else:
-    # Parse cloud URL
-    parsed = urlparse(QDRANT_URL)
-    QDRANT_HOST = parsed.hostname
-    QDRANT_PORT = parsed.port or 6333
-
-# Detect if using cloud Qdrant
-IS_QDRANT_CLOUD = QDRANT_URL and 'cloud.qdrant.io' in QDRANT_URL
-
-# Ollama - Support both local and remote instances
-OLLAMA_URL = os.getenv('OLLAMA_URL', 'http://host.docker.internal:11434')
-
-# DuckDB (Local files - no Motherduck)
-DUCKDB_PRICES_DB = f"{DUCKDB_PATH}/prices.db"
-DUCKDB_MACRO_DB = f"{DUCKDB_PATH}/macro.db"
-DUCKDB_FUNDAMENTALS_DB = f"{DUCKDB_PATH}/fundamentals.db"
-
-# Redis - NOT USED (removed from architecture)
-REDIS_HOST = None
-REDIS_PORT = None
-REDIS_PASSWORD = None
-REDIS_URL = None
+# DuckDB
+DUCKDB_PRICES_DB = os.getenv('DUCKDB_PRICES_DB', '/tmp/prices.duckdb')
+DUCKDB_MACRO_DB = os.getenv('DUCKDB_MACRO_DB', '/tmp/macro.duckdb')
 
 # ============================================================================
 # QDRANT COLLECTIONS
 # ============================================================================
+
 QDRANT_COLLECTIONS = {
-    "business_analyst_10k": "business_analyst_10k_filings",
-    "business_analyst_10q": "business_analyst_10q_filings",
-    "business_analyst_transcripts": "business_analyst_transcripts",
-    "insider_sentiment_transcripts": "insider_sentiment_transcripts",
-    "macro_central_bank_comms": "macro_central_bank_communications",
-}
-
-# Embedding configuration
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 1536
-
-# ============================================================================
-# TICKERS - TEST MODE vs PRODUCTION MODE
-# ============================================================================
-if TEST_MODE:
-    # TEST MODE: Use only 1 ticker for fast testing
-    DEFAULT_TICKERS = ["AAPL"]
-    MAX_NEWS_ARTICLES = 2  # Only 2 news articles per ticker
-    MAX_FILING_PAGES = 5   # Only first 5 pages of SEC filings
-    MAX_TRANSCRIPT_PAGES = 3  # Only first 3 pages of transcripts
-    LOOKBACK_DAYS = 7      # Only 7 days of historical data
-else:
-    # PRODUCTION MODE: Full dataset
-    DEFAULT_TICKERS = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B",
-        "JPM", "JNJ", "V", "PG", "MA", "HD", "UNH", "DIS", "BAC", "XOM",
-        "ADBE", "NFLX", "CRM", "ORCL", "CSCO", "INTC", "AMD", "QCOM"
-    ]
-    MAX_NEWS_ARTICLES = 50
-    MAX_FILING_PAGES = None  # All pages
-    MAX_TRANSCRIPT_PAGES = None  # All pages
-    LOOKBACK_DAYS = 365
-
-# ============================================================================
-# DAG DEFAULT ARGUMENTS
-# ============================================================================
-DEFAULT_ARGS = {
-    "owner": "equity_research_system",
-    "depends_on_past": False,
-    "email": [os.getenv("ALERT_EMAIL", "admin@example.com")],
-    "email_on_failure": True,
-    "email_on_retry": False,
-    "retries": 1 if TEST_MODE else 3,  # Fewer retries in test mode
-    "retry_delay": timedelta(minutes=1 if TEST_MODE else 5),
-    "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=5 if TEST_MODE else 30),
+    'business_analyst_10k': 'ba_10k_propositions',
+    'insider_sentiment_transcripts': 'insider_earnings_transcripts',
+    'macro_central_bank_comms': 'macro_cb_statements',
 }
 
 # ============================================================================
-# TASK EXECUTION SETTINGS
+# API KEYS AND ENDPOINTS
 # ============================================================================
-MAX_ACTIVE_RUNS = 1 if TEST_MODE else 3
-API_TIMEOUT_SECONDS = 15 if TEST_MODE else 30
-MAX_PRICE_GAP_PCT = 0.20  # 20% circuit breaker threshold
-MIN_TICKER_COVERAGE_PCT = 0.90  # Require 90% ticker coverage
+
+# EODHD
+EODHD_API_KEY = os.getenv('EODHD_API_KEY', 'demo')
+EODHD_BASE_URL = 'https://eodhd.com/api'
+
+# Financial Modeling Prep
+FMP_API_KEY = os.getenv('FMP_API_KEY', 'demo')
+FMP_BASE_URL = 'https://financialmodelingprep.com/api/v3'
+
+# OpenAI
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
+# API Timeouts
+API_TIMEOUT_SECONDS = 30
+
+# ============================================================================
+# DATA QUALITY THRESHOLDS
+# ============================================================================
+
+MIN_TICKER_COVERAGE_PCT = 0.80  # 80% of tickers must have data
+MAX_PRICE_GAP_PCT = 0.20  # 20% price gap = anomaly
+LOOKBACK_DAYS = 7  # Default lookback for incremental loads
+MAX_NEWS_ARTICLES = 50  # Max articles per ticker per fetch
+
+# ============================================================================
+# SCHEDULING
+# ============================================================================
+
+# Timezone: Hong Kong Time (HKT = UTC+8)
+# Note: Airflow schedules use UTC internally
+# Example: 6 PM HKT = 10 AM UTC
+
+SCHEDULE_INTERVALS = {
+    'daily_market_data': '0 23 * * 1-5',  # 11 PM UTC = 7 AM HKT (after US close)
+    'daily_news': '0 */6 * * *',  # Every 6 hours
+    'weekly_fundamentals': '0 18 * * 0',  # Sunday 6 PM UTC = Monday 2 AM HKT
+    'monthly_insider': '0 19 1 * *',  # 1st of month, 7 PM UTC = 3 AM HKT
+    'monthly_institutional': '0 19 15 * *',  # 15th of month
+    'weekly_macro': '0 17 * * 1',  # Monday 5 PM UTC = 1 AM HKT
+    'daily_quality': '0 15 * * *',  # 3 PM UTC = 11 PM HKT
+    'monthly_retraining': '0 20 1 * *',  # 1st of month, 8 PM UTC = 4 AM HKT
+    'neo4j_sync': '0 */12 * * *',  # Every 12 hours
+}
+
+# ============================================================================
+# FEATURE FLAGS
+# ============================================================================
+
+ENABLE_LLM_CHUNKING = os.getenv('ENABLE_LLM_CHUNKING', 'False').lower() == 'true'
+ENABLE_FORENSIC_SCORES = os.getenv('ENABLE_FORENSIC_SCORES', 'True').lower() == 'true'
+ENABLE_GRAPH_ANALYTICS = os.getenv('ENABLE_GRAPH_ANALYTICS', 'True').lower() == 'true'
 
 # ============================================================================
 # LOGGING
 # ============================================================================
-LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if TEST_MODE else "INFO")
 
-# ============================================================================
-# DEPLOYMENT INFO (for debugging)
-# ============================================================================
-DEPLOYMENT_MODE = "cloud" if (IS_NEO4J_CLOUD or IS_QDRANT_CLOUD) else "local"
-
-# Print configuration on import (useful for debugging)
-if __name__ != "__main__":
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Configuration loaded: {DEPLOYMENT_MODE.upper()} mode")
-    logger.info(f"  TEST_MODE: {TEST_MODE}")
-    logger.info(f"  Tickers: {DEFAULT_TICKERS}")
-    logger.info(f"  Postgres: {POSTGRES_HOST}:{POSTGRES_PORT}")
-    logger.info(f"  Neo4j: {NEO4J_URI} (cloud={IS_NEO4J_CLOUD})")
-    logger.info(f"  Qdrant: {QDRANT_URL} (cloud={IS_QDRANT_CLOUD})")
-    logger.info(f"  Ollama: {OLLAMA_URL}")
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
