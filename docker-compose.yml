@@ -1,13 +1,14 @@
 services:
-  airflow-standalone:
+  airflow-webserver:
     image: apache/airflow:2.8.1-python3.11
-    container_name: airflow_standalone
+    container_name: airflow_webserver
     env_file: .env
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 300
       TEST_MODE: "true"
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
@@ -23,7 +24,34 @@ services:
       - ./scripts/DAGs:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
-    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests pandas && airflow db migrate && airflow standalone"
+    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests pandas && airflow db migrate && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && exec airflow webserver -p 8080 -w 1 --workerclass sync --timeout 300 --graceful-timeout 300"
+    restart: unless-stopped
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: airflow_scheduler
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
+      AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      TEST_MODE: "true"
+      NEO4J_URI: ${NEO4J_URI}
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      EODHD_API_KEY: ${EODHD_API_KEY}
+      FMP_API_KEY: ${FMP_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+    volumes:
+      - ./scripts/DAGs:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+    command: bash -c "pip install --no-cache-dir psycopg2-binary neo4j qdrant-client requests pandas && sleep 60 && airflow scheduler"
+    depends_on:
+      - airflow-webserver
     restart: unless-stopped
 
 networks:
