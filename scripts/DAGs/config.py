@@ -8,6 +8,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # ============================================================================
+# TEST MODE CONFIGURATION
+# ============================================================================
+TEST_MODE = os.getenv('TEST_MODE', 'true').lower() == 'true'
+
+if TEST_MODE:
+    print("⚠️  TEST MODE ENABLED - Using minimal data for faster testing")
+
+# ============================================================================
 # PATHS (Inside Docker containers)
 # ============================================================================
 STORAGE_ROOT = Path(os.getenv('STORAGE_ROOT', '/opt/airflow/storage'))
@@ -112,14 +120,26 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 1536
 
 # ============================================================================
-# TICKERS
+# TICKERS - TEST MODE vs PRODUCTION MODE
 # ============================================================================
-# Default watchlist (can be overridden by loading from file)
-DEFAULT_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B",
-    "JPM", "JNJ", "V", "PG", "MA", "HD", "UNH", "DIS", "BAC", "XOM",
-    "ADBE", "NFLX", "CRM", "ORCL", "CSCO", "INTC", "AMD", "QCOM"
-]
+if TEST_MODE:
+    # TEST MODE: Use only 1 ticker for fast testing
+    DEFAULT_TICKERS = ["AAPL"]
+    MAX_NEWS_ARTICLES = 2  # Only 2 news articles per ticker
+    MAX_FILING_PAGES = 5   # Only first 5 pages of SEC filings
+    MAX_TRANSCRIPT_PAGES = 3  # Only first 3 pages of transcripts
+    LOOKBACK_DAYS = 7      # Only 7 days of historical data
+else:
+    # PRODUCTION MODE: Full dataset
+    DEFAULT_TICKERS = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B",
+        "JPM", "JNJ", "V", "PG", "MA", "HD", "UNH", "DIS", "BAC", "XOM",
+        "ADBE", "NFLX", "CRM", "ORCL", "CSCO", "INTC", "AMD", "QCOM"
+    ]
+    MAX_NEWS_ARTICLES = 50
+    MAX_FILING_PAGES = None  # All pages
+    MAX_TRANSCRIPT_PAGES = None  # All pages
+    LOOKBACK_DAYS = 365
 
 # ============================================================================
 # DAG DEFAULT ARGUMENTS
@@ -130,24 +150,24 @@ DEFAULT_ARGS = {
     "email": [os.getenv("ALERT_EMAIL", "admin@example.com")],
     "email_on_failure": True,
     "email_on_retry": False,
-    "retries": 3,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 1 if TEST_MODE else 3,  # Fewer retries in test mode
+    "retry_delay": timedelta(minutes=1 if TEST_MODE else 5),
     "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=30),
+    "max_retry_delay": timedelta(minutes=5 if TEST_MODE else 30),
 }
 
 # ============================================================================
 # TASK EXECUTION SETTINGS
 # ============================================================================
-MAX_ACTIVE_RUNS = 3
-API_TIMEOUT_SECONDS = 30
+MAX_ACTIVE_RUNS = 1 if TEST_MODE else 3
+API_TIMEOUT_SECONDS = 15 if TEST_MODE else 30
 MAX_PRICE_GAP_PCT = 0.20  # 20% circuit breaker threshold
 MIN_TICKER_COVERAGE_PCT = 0.90  # Require 90% ticker coverage
 
 # ============================================================================
 # LOGGING
 # ============================================================================
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if TEST_MODE else "INFO")
 
 # ============================================================================
 # DEPLOYMENT INFO (for debugging)
@@ -159,6 +179,8 @@ if __name__ != "__main__":
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Configuration loaded: {DEPLOYMENT_MODE.upper()} mode")
+    logger.info(f"  TEST_MODE: {TEST_MODE}")
+    logger.info(f"  Tickers: {DEFAULT_TICKERS}")
     logger.info(f"  Postgres: {POSTGRES_HOST}:{POSTGRES_PORT}")
     logger.info(f"  Neo4j: {NEO4J_URI} (cloud={IS_NEO4J_CLOUD})")
     logger.info(f"  Qdrant: {QDRANT_URL} (cloud={IS_QDRANT_CLOUD})")
