@@ -1,5 +1,28 @@
 services:
   # ============================================================================
+  # POSTGRESQL DATABASE (Local Development)
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - equity_network
+
+  # ============================================================================
   # QDRANT VECTOR DATABASE (Local Development)
   # ============================================================================
   qdrant:
@@ -26,16 +49,17 @@ services:
     container_name: airflow_webserver
     env_file: .env
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
+      # Use local Postgres (override .env if needed)
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
-      # Increase timeout for slow Neon database connection from HK
-      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: 600
-      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 600
-      # Database connection pool settings for remote database
-      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 10
-      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 3600
-      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 20
-      # Reduce DAG parsing frequency to minimize DB queries
+      # Local database = fast, no special timeouts needed
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: 120
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 120
+      # Standard connection pool for local DB
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 5
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 1800
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 10
+      # Normal DAG parsing frequency
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
       AIRFLOW__CORE__PARALLELISM: 32
       AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 16
@@ -43,8 +67,7 @@ services:
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_URL: http://qdrant:6333
       EODHD_API_KEY: ${EODHD_API_KEY}
       FMP_API_KEY: ${FMP_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
@@ -57,8 +80,8 @@ services:
       - ./airflow.cfg:/opt/airflow/airflow.cfg:ro
     command: >
       bash -c '
-        echo "Waiting 60s for Qdrant to be ready...";
-        sleep 60;
+        echo "Waiting 30s for Postgres and Qdrant...";
+        sleep 30;
         echo "Starting Airflow database migration...";
         airflow db migrate;
         airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true;
@@ -66,6 +89,7 @@ services:
         exec airflow webserver
       '
     depends_on:
+      - postgres
       - qdrant
     restart: unless-stopped
     networks:
@@ -81,13 +105,14 @@ services:
     container_name: airflow_scheduler
     env_file: .env
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
+      # Use local Postgres
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW__CORE__FERNET_KEY: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
-      # Database connection pool settings
-      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 10
-      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 3600
-      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 20
-      # Scheduler optimization for remote database
+      # Standard connection pool
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 5
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 1800
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 10
+      # Normal scheduler settings
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
       AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 120
       AIRFLOW__CORE__PARALLELISM: 32
@@ -96,8 +121,7 @@ services:
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_URL: http://qdrant:6333
       EODHD_API_KEY: ${EODHD_API_KEY}
       FMP_API_KEY: ${FMP_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
@@ -108,13 +132,14 @@ services:
       - ./airflow.cfg:/opt/airflow/airflow.cfg:ro
     command: >
       bash -c '
-        echo "Waiting 180s for webserver and Qdrant to be ready...";
-        sleep 180;
+        echo "Waiting 90s for webserver to be ready...";
+        sleep 90;
         echo "Starting Airflow scheduler...";
         exec airflow scheduler
       '
     depends_on:
       - airflow-webserver
+      - postgres
       - qdrant
     restart: unless-stopped
     networks:
@@ -124,6 +149,8 @@ services:
 # VOLUMES
 # ============================================================================
 volumes:
+  postgres_data:
+    name: postgres_data
   qdrant_data:
     name: qdrant_data
 
