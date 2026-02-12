@@ -1,0 +1,32 @@
+services:
+  airflow-webserver:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: airflow_webserver
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
+      AIRFLOW__CORE__FERNET_KEY: rZ5K4b7WxYzP8qR3tV6uXwA1cD2eF4gH5iJ7kL9mN0oP
+      NEO4J_URI: ${NEO4J_URI}
+      QDRANT_URL: ${QDRANT_URL}
+    ports:
+      - \"8080:8080\"
+    volumes:
+      - ./scripts/DAGs:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: bash -c \"pip install psycopg2-binary neo4j qdrant-client && airflow db init && airflow webserver\"
+    restart: unless-stopped
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.11
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${POSTGRES_URL}
+    volumes:
+      - ./scripts/DAGs:/opt/airflow/dags
+    command: bash -c \"pip install psycopg2-binary && airflow scheduler\"
+    depends_on:
+      - airflow-webserver
+
+networks:
+  default:
+    name: equity_network
