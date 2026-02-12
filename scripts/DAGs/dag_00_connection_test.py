@@ -33,7 +33,7 @@ def test_postgres_connection(**context):
     logger.info(f"Testing Postgres connection to {POSTGRES_HOST}:{POSTGRES_PORT}")
     
     try:
-        # Connect to database
+        # Connect to database (no timeout)
         conn = psycopg2.connect(POSTGRES_URL)
         cursor = conn.cursor()
         
@@ -79,7 +79,7 @@ def test_neo4j_connection(**context):
     logger.info(f"Testing Neo4j connection to {NEO4J_URI}")
     
     try:
-        # Connect to Neo4j
+        # Connect to Neo4j (no timeout)
         driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         
         # Verify connection
@@ -114,18 +114,18 @@ def test_neo4j_connection(**context):
 
 
 def test_qdrant_connection(**context):
-    """Test Qdrant Cloud connection with extended timeout"""
+    """Test Qdrant Cloud connection with NO timeout"""
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams
     
     logger.info(f"Testing Qdrant connection to {QDRANT_URL}")
     
     try:
-        # Connect to Qdrant with extended timeout (60 seconds)
+        # Connect to Qdrant with NO timeout (timeout=None means wait forever)
         if QDRANT_API_KEY:
-            client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
+            client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=None)
         else:
-            client = QdrantClient(url=QDRANT_URL, timeout=60)
+            client = QdrantClient(url=QDRANT_URL, timeout=None)
         
         logger.info("✅ Qdrant connected successfully!")
         
@@ -168,11 +168,11 @@ def test_api_keys(**context):
     
     results = {}
     
-    # Test EODHD API
+    # Test EODHD API (no timeout)
     if EODHD_API_KEY:
         try:
             url = f"https://eodhistoricaldata.com/api/eod/AAPL.US?api_token={EODHD_API_KEY}&fmt=json&limit=1"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=None)
             if response.status_code == 200:
                 logger.info("✅ EODHD API key valid")
                 results['eodhd'] = 'valid'
@@ -186,11 +186,11 @@ def test_api_keys(**context):
         logger.warning("⚠️ EODHD_API_KEY not set")
         results['eodhd'] = 'missing'
     
-    # Test FMP API (optional - gracefully handle 403)
+    # Test FMP API (optional - gracefully handle 403, no timeout)
     if FMP_API_KEY:
         try:
             url = f"https://financialmodelingprep.com/api/v3/quote/AAPL?apikey={FMP_API_KEY}"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=None)
             if response.status_code == 200 and response.json():
                 logger.info("✅ FMP API key valid")
                 results['fmp'] = 'valid'
