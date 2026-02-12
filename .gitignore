@@ -4,9 +4,53 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+*.egg-info/
+dist/
+build/
 
 # Environment variables
 .env
+.env.local
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Airflow runtime files
+logs/
+airflow-webserver.pid
+airflow-scheduler.pid
+webserver_config.py
+unittests.cfg
+
+# ChromaDB / Vector stores
+storage/
+chroma_db/
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files (large PDFs should not be in git)
+*.pdf
+*.csv
+*.parquet
+*.xlsx
+
+# Model files
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Docker
+.dockerignore
