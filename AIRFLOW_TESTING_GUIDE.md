@@ -22,9 +22,9 @@ cat .env
 You should see:
 ```bash
 # API Keys
-EODHD_API_KEY=6957671cac2858.27368157
-FMP_API_KEY=6kqjitcYPxyr60Xy1Jfem92Q1z9LfCHM
-TAVILY_API_KEY=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
+EODHD_API_KEY
+FMP_API_KEY=
+TAVILY_API_KEY=
 
 # Cloud Databases
 POSTGRES_URL=postgresql://user:pass@cloud-host/db?sslmode=require
