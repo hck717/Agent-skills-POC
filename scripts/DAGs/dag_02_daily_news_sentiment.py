@@ -1,327 +1,242 @@
 """
-DAG 2: Daily News & Sentiment Pipeline
+DAG 02: Daily News Sentiment Pipeline
 Schedule: 3x daily (7 AM, 12 PM, 6 PM HKT)
-Purpose: Ingest breaking news, sentiment, and SEC filings
+Purpose: Ingest breaking news, sentiment, and SEC filing alerts
 """
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-import config
+import logging
+import requests
+import psycopg2
+import feedparser
+import re
 
-# ============================================================================
-# TASK FUNCTIONS
-# ============================================================================
+import sys
+sys.path.insert(0, '/opt/airflow/dags')
+from config import (
+    DEFAULT_ARGS, DEFAULT_TICKERS, TEST_MODE,
+    POSTGRES_URL, EODHD_API_KEY, FMP_API_KEY,
+    EODHD_BASE_URL, FMP_BASE_URL, MAX_ACTIVE_RUNS, MAX_NEWS_ARTICLES
+)
+
+logger = logging.getLogger(__name__)
 
 def extract_fmp_latest_news(**context):
-    """
-    Fetch last 8 hours of news articles from FMP
-    """
-    import requests
-    import pandas as pd
-    from datetime import datetime, timedelta
+    """Extract last 8 hours of news from FMP"""
+    logger.info(f"Extracting FMP news for {len(DEFAULT_TICKERS)} tickers")
+    news_data = []
     
-    execution_time = datetime.fromisoformat(context['ts'])
-    lookback_hours = 8
-    from_time = (execution_time - timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    for ticker in DEFAULT_TICKERS:
+        try:
+            url = f"{FMP_BASE_URL}/stock_news"
+            params = {"tickers": ticker, "limit": MAX_NEWS_ARTICLES, "apikey": FMP_API_KEY}
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            articles = response.json()
+            
+            for article in articles:
+                news_data.append({
+                    'ticker': ticker,
+                    'headline': article.get('title', ''),
+                    'summary': article.get('text', '')[:500],
+                    'publish_date': article.get('publishedDate'),
+                    'source': article.get('site', 'fmp'),
+                    'url': article.get('url', ''),
+                    'sentiment_score': article.get('sentiment', 0)
+                })
+            
+            logger.info(f"✅ {ticker}: {len(articles)} articles")
+        except Exception as e:
+            logger.warning(f"FMP news failed for {ticker}: {str(e)}")
     
-    all_news = []
-    
-    # General market news
-    url = f"{config.FMP_BASE_URL}/stock_news"
-    params = {
-        "apikey": config.FMP_API_KEY,
-        "limit": 100
-    }
+    context['ti'].xcom_push(key='news_data', value=news_data)
+    return {"extracted": len(news_data)}
+
+def extract_eodhd_news(**context):
+    """Extract EODHD news feed as backup"""
+    news_data = context['ti'].xcom_pull(task_ids='extract_fmp_latest_news', key='news_data') or []
+    logger.info("Extracting EODHD news feed")
     
     try:
-        response = requests.get(url, params=params, timeout=config.API_TIMEOUT_SECONDS)
+        url = f"{EODHD_BASE_URL}/news"
+        params = {"api_token": EODHD_API_KEY, "fmt": "json", "limit": MAX_NEWS_ARTICLES * len(DEFAULT_TICKERS)}
+        response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        news_data = response.json()
-        all_news.extend(news_data)
-    except Exception as e:
-        print(f"Error fetching general news: {e}")
-    
-    # Ticker-specific news
-    for ticker in config.DEFAULT_TICKERS[:10]:  # Limit to avoid rate limits
-        url = f"{config.FMP_BASE_URL}/stock_news"
-        params = {
-            "tickers": ticker,
-            "limit": 10,
-            "apikey": config.FMP_API_KEY
-        }
+        articles = response.json()
         
-        try:
-            response = requests.get(url, params=params, timeout=config.API_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            ticker_news = response.json()
-            all_news.extend(ticker_news)
-        except Exception as e:
-            print(f"Error fetching news for {ticker}: {e}")
+        for article in articles:
+            tags = article.get('tags', [])
+            relevant_tickers = [t for t in tags if t in DEFAULT_TICKERS]
+            
+            for ticker in relevant_tickers:
+                news_data.append({
+                    'ticker': ticker,
+                    'headline': article.get('title', ''),
+                    'summary': article.get('content', '')[:500],
+                    'publish_date': article.get('date'),
+                    'source': 'eodhd',
+                    'url': article.get('link', ''),
+                    'sentiment_score': article.get('sentiment', 0)
+                })
+        
+        logger.info(f"✅ EODHD: {len([n for n in news_data if n['source']=='eodhd'])} articles")
+    except Exception as e:
+        logger.warning(f"EODHD news failed: {str(e)}")
     
-    context['ti'].xcom_push(key='fmp_news', value=all_news)
-    print(f"Extracted {len(all_news)} news articles from FMP")
-    return True
-
+    context['ti'].xcom_push(key='news_data', value=news_data)
+    return {"extracted": len(news_data)}
 
 def extract_sec_edgar_rss(**context):
-    """
-    Monitor SEC EDGAR RSS for new filings
-    """
-    import feedparser
-    from datetime import datetime, timedelta
-    
-    execution_time = datetime.fromisoformat(context['ts'])
-    lookback_hours = 8
-    cutoff_time = execution_time - timedelta(hours=lookback_hours)
-    
-    # SEC EDGAR RSS feed
-    rss_url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK=&type=&company=&dateb=&owner=include&start=0&count=100&output=atom"
+    """Monitor SEC EDGAR RSS for new filings"""
+    logger.info("Monitoring SEC EDGAR RSS feed")
+    filings_data = []
     
     try:
+        rss_url = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK=&type=&company=&dateb=&owner=include&start=0&count=100&output=atom"
         feed = feedparser.parse(rss_url)
         
-        recent_filings = []
         for entry in feed.entries:
-            filing_date = datetime(*entry.published_parsed[:6])
-            
-            if filing_date >= cutoff_time:
-                # Parse filing info
-                filing_info = {
-                    'title': entry.title,
-                    'link': entry.link,
-                    'published': entry.published,
-                    'summary': entry.summary,
-                    'filing_date': filing_date.isoformat()
-                }
-                
-                # Extract form type (10-K, 10-Q, 8-K)
-                if '10-K' in entry.title:
-                    filing_info['form_type'] = '10-K'
-                    recent_filings.append(filing_info)
-                elif '10-Q' in entry.title:
-                    filing_info['form_type'] = '10-Q'
-                    recent_filings.append(filing_info)
-                elif '8-K' in entry.title:
-                    filing_info['form_type'] = '8-K'
-                    recent_filings.append(filing_info)
+            title = entry.get('title', '')
+            for ticker in DEFAULT_TICKERS:
+                if ticker in title.upper():
+                    form_match = re.search(r'(\d+-[KQ]|8-K)', title)
+                    form_type = form_match.group(1) if form_match else 'UNKNOWN'
+                    
+                    filings_data.append({
+                        'ticker': ticker,
+                        'form_type': form_type,
+                        'filing_date': entry.get('published', ''),
+                        'title': title,
+                        'link': entry.get('link', ''),
+                        'summary': entry.get('summary', '')[:200]
+                    })
         
-        context['ti'].xcom_push(key='sec_filings', value=recent_filings)
-        print(f"Found {len(recent_filings)} recent SEC filings")
-        
-        # Trigger quarterly SEC filings DAG if 10-K or 10-Q found
-        if any(f['form_type'] in ['10-K', '10-Q'] for f in recent_filings):
-            context['ti'].xcom_push(key='trigger_sec_dag', value=True)
-        
-        return True
-        
+        logger.info(f"✅ SEC EDGAR: {len(filings_data)} new filings")
     except Exception as e:
-        print(f"Error fetching SEC EDGAR RSS: {e}")
-        return False
-
+        logger.warning(f"SEC EDGAR RSS failed: {str(e)}")
+    
+    context['ti'].xcom_push(key='filings_data', value=filings_data)
+    return {"extracted": len(filings_data)}
 
 def transform_news_sentiment(**context):
-    """
-    Deduplicate, sentiment analysis, entity extraction
-    """
+    """Deduplicate and extract entities from news"""
+    news_data = context['ti'].xcom_pull(task_ids='extract_eodhd_news', key='news_data') or []
+    logger.info(f"Transforming {len(news_data)} news articles")
+    
     import pandas as pd
-    from difflib import SequenceMatcher
+    df = pd.DataFrame(news_data)
     
-    ti = context['ti']
-    fmp_news = ti.xcom_pull(key='fmp_news', task_ids='extract_fmp_latest_news')
+    if df.empty:
+        context['ti'].xcom_push(key='transformed_news', value=[])
+        return {"transformed": 0}
     
-    if not fmp_news:
-        print("No news to process")
-        return False
+    # Deduplicate by headline similarity (simple exact match for now)
+    df = df.drop_duplicates(subset=['headline', 'ticker'])
     
-    df = pd.DataFrame(fmp_news)
+    # Extract publish timestamp
+    df['publish_date'] = pd.to_datetime(df['publish_date'], errors='coerce')
     
-    # Deduplicate by title similarity
-    unique_news = []
-    seen_titles = []
+    # Filter last 24 hours
+    cutoff = datetime.now() - timedelta(hours=24)
+    df = df[df['publish_date'] >= cutoff]
     
-    for _, row in df.iterrows():
-        title = row.get('title', '')
-        is_duplicate = False
-        
-        for seen_title in seen_titles:
-            similarity = SequenceMatcher(None, title.lower(), seen_title.lower()).ratio()
-            if similarity > 0.85:  # 85% similarity threshold
-                is_duplicate = True
-                break
-        
-        if not is_duplicate:
-            unique_news.append(row.to_dict())
-            seen_titles.append(title)
+    # Sort by publish date
+    df = df.sort_values('publish_date', ascending=False)
     
-    # Sentiment analysis placeholder
-    # In production: Use FinBERT or FMP's sentiment scores
-    for article in unique_news:
-        article['sentiment_score'] = article.get('sentiment', 0)  # -1 to 1
-    
-    # Entity extraction placeholder
-    # In production: Use NER model to extract tickers, companies, people
-    for article in unique_news:
-        article['extracted_tickers'] = []  # Would extract from text
-    
-    context['ti'].xcom_push(key='processed_news', value=unique_news)
-    print(f"Processed {len(unique_news)} unique news articles")
-    return True
-
+    transformed_data = df.to_dict('records')
+    context['ti'].xcom_push(key='transformed_news', value=transformed_data)
+    logger.info(f"✅ Transformed: {len(transformed_data)} articles (deduplicated)")
+    return {"transformed": len(transformed_data)}
 
 def load_postgres_news(**context):
-    """
-    Load news into Postgres with TimescaleDB
-    """
-    import psycopg2
-    from psycopg2.extras import execute_values
-    import json
+    """Load news to Postgres with TimescaleDB"""
+    transformed_news = context['ti'].xcom_pull(task_ids='transform_news_sentiment', key='transformed_news') or []
+    filings_data = context['ti'].xcom_pull(task_ids='extract_sec_edgar_rss', key='filings_data') or []
     
-    ti = context['ti']
-    processed_news = ti.xcom_pull(key='processed_news', task_ids='transform_news_sentiment')
+    if not transformed_news and not filings_data:
+        logger.info("No news or filings to load")
+        return {"loaded": 0}
     
-    if not processed_news:
-        print("No news to load")
-        return False
+    logger.info(f"Loading {len(transformed_news)} news articles and {len(filings_data)} filings to Postgres")
     
-    # Connect to Postgres
-    conn = psycopg2.connect(
-        host=config.POSTGRES_HOST,
-        port=config.POSTGRES_PORT,
-        dbname=config.POSTGRES_DB,
-        user=config.POSTGRES_USER,
-        password=config.POSTGRES_PASSWORD
-    )
-    cur = conn.cursor()
+    conn = psycopg2.connect(POSTGRES_URL)
+    cursor = conn.cursor()
     
-    # Create table if not exists
-    cur.execute("""
+    # Create news_articles table
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS news_articles (
             id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
+            ticker VARCHAR(10),
+            headline TEXT,
             summary TEXT,
+            publish_date TIMESTAMP,
+            source VARCHAR(50),
             url TEXT,
-            source VARCHAR(100),
-            publish_date TIMESTAMP NOT NULL,
-            sentiment_score FLOAT,
-            extracted_tickers TEXT[],
-            raw_data JSONB,
-            ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            sentiment_score NUMERIC,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, headline, publish_date)
         )
     """)
     
-    # Create TimescaleDB hypertable (if not already)
-    try:
-        cur.execute("""
-            SELECT create_hypertable('news_articles', 'publish_date', 
-                if_not_exists => TRUE, migrate_data => TRUE)
-        """)
-    except Exception as e:
-        print(f"Hypertable creation note: {e}")
-    
-    # Insert news articles (upsert based on URL)
-    insert_query = """
-        INSERT INTO news_articles (title, summary, url, source, publish_date, sentiment_score, extracted_tickers, raw_data)
-        VALUES %s
-        ON CONFLICT (url) DO UPDATE SET
-            sentiment_score = EXCLUDED.sentiment_score,
-            extracted_tickers = EXCLUDED.extracted_tickers
-    """
-    
-    values = [
-        (
-            article.get('title'),
-            article.get('text', article.get('summary')),
-            article.get('url', article.get('link')),
-            article.get('site', 'FMP'),
-            article.get('publishedDate', article.get('published')),
-            article.get('sentiment_score', 0.0),
-            article.get('extracted_tickers', []),
-            json.dumps(article)
+    # Create sec_filings table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sec_filings (
+            id SERIAL PRIMARY KEY,
+            ticker VARCHAR(10),
+            form_type VARCHAR(20),
+            filing_date TIMESTAMP,
+            title TEXT,
+            link TEXT,
+            summary TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, form_type, filing_date)
         )
-        for article in processed_news
-    ]
+    """)
     
-    execute_values(cur, insert_query, values)
+    # UPSERT news articles
+    for article in transformed_news:
+        cursor.execute("""
+            INSERT INTO news_articles (ticker, headline, summary, publish_date, source, url, sentiment_score)
+            VALUES (%(ticker)s, %(headline)s, %(summary)s, %(publish_date)s, %(source)s, %(url)s, %(sentiment_score)s)
+            ON CONFLICT (ticker, headline, publish_date) DO UPDATE SET
+                summary = EXCLUDED.summary,
+                sentiment_score = EXCLUDED.sentiment_score
+        """, article)
+    
+    # UPSERT SEC filings
+    for filing in filings_data:
+        cursor.execute("""
+            INSERT INTO sec_filings (ticker, form_type, filing_date, title, link, summary)
+            VALUES (%(ticker)s, %(form_type)s, %(filing_date)s, %(title)s, %(link)s, %(summary)s)
+            ON CONFLICT (ticker, form_type, filing_date) DO NOTHING
+        """, filing)
     
     conn.commit()
-    cur.close()
+    cursor.close()
     conn.close()
     
-    print(f"Loaded {len(processed_news)} news articles into Postgres")
-    return True
+    logger.info(f"✅ Loaded {len(transformed_news)} news + {len(filings_data)} filings to Postgres")
+    return {"loaded": len(transformed_news) + len(filings_data)}
 
-
-def check_trigger_sec_dag(**context):
-    """
-    Check if SEC filings DAG should be triggered
-    """
-    ti = context['ti']
-    trigger_flag = ti.xcom_pull(key='trigger_sec_dag', task_ids='extract_sec_edgar_rss')
-    
-    if trigger_flag:
-        print("New 10-K/10-Q filings detected - will trigger DAG 4")
-        return True
-    else:
-        print("No new filings requiring processing")
-        return False
-
-
-# ============================================================================
 # DAG DEFINITION
-# ============================================================================
-
-default_args = config.DEFAULT_ARGS.copy()
-default_args.update({
-    "start_date": datetime(2026, 1, 1),
-})
-
 with DAG(
-    dag_id="dag_02_daily_news_sentiment_pipeline",
-    default_args=default_args,
-    description="Ingest breaking news, sentiment, and SEC filings",
-    schedule_interval="0 7,12,18 * * *",  # 7 AM, 12 PM, 6 PM HKT
+    dag_id='02_daily_news_sentiment_pipeline',
+    default_args=DEFAULT_ARGS,
+    description='3x daily news and sentiment ingestion',
+    schedule_interval='0 */6 * * *' if not TEST_MODE else None,  # Every 6 hours
+    start_date=datetime(2026, 1, 1),
     catchup=False,
-    max_active_runs=config.MAX_ACTIVE_RUNS,
-    tags=["daily", "news", "sentiment", "3x_daily"],
+    max_active_runs=MAX_ACTIVE_RUNS,
+    tags=['daily', 'news', 'sentiment'],
 ) as dag:
-
-    # Extract tasks
-    task_extract_fmp_news = PythonOperator(
-        task_id="extract_fmp_latest_news",
-        python_callable=extract_fmp_latest_news,
-    )
-
-    task_extract_sec = PythonOperator(
-        task_id="extract_sec_edgar_rss",
-        python_callable=extract_sec_edgar_rss,
-    )
-
-    # Transform task
-    task_transform = PythonOperator(
-        task_id="transform_news_sentiment",
-        python_callable=transform_news_sentiment,
-    )
-
-    # Load task
-    task_load_news = PythonOperator(
-        task_id="load_postgres_news",
-        python_callable=load_postgres_news,
-    )
-
-    # Conditional trigger for SEC filings DAG
-    task_check_trigger = PythonOperator(
-        task_id="check_trigger_sec_dag",
-        python_callable=check_trigger_sec_dag,
-    )
-
-    task_trigger_sec_dag = TriggerDagRunOperator(
-        task_id="trigger_quarterly_sec_filings",
-        trigger_dag_id="dag_04_quarterly_sec_filings_pipeline",
-        wait_for_completion=False,
-    )
-
-    # Define dependencies
-    [task_extract_fmp_news, task_extract_sec] >> task_transform
-    task_transform >> task_load_news
-    task_extract_sec >> task_check_trigger >> task_trigger_sec_dag
+    
+    task_extract_fmp = PythonOperator(task_id='extract_fmp_latest_news', python_callable=extract_fmp_latest_news)
+    task_extract_eodhd = PythonOperator(task_id='extract_eodhd_news', python_callable=extract_eodhd_news)
+    task_extract_sec = PythonOperator(task_id='extract_sec_edgar_rss', python_callable=extract_sec_edgar_rss)
+    task_transform = PythonOperator(task_id='transform_news_sentiment', python_callable=transform_news_sentiment)
+    task_load_postgres = PythonOperator(task_id='load_postgres_news', python_callable=load_postgres_news)
+    
+    task_extract_fmp >> task_extract_eodhd >> task_transform
+    task_extract_sec >> task_load_postgres
+    task_transform >> task_load_postgres
