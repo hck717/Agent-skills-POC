@@ -11,6 +11,7 @@ import os
 
 TEST_MODE = os.getenv('AIRFLOW_TEST_MODE', 'True').lower() == 'true'
 MAX_ACTIVE_RUNS = 1
+DEPLOYMENT_MODE = os.getenv('DEPLOYMENT_MODE', 'local')  # 'local' or 'cloud'
 
 # ============================================================================
 # DEFAULT AIRFLOW ARGS
@@ -45,6 +46,9 @@ POSTGRES_URL = os.getenv(
     'POSTGRES_URL',
     'postgresql://postgres:postgres@localhost:5432/financial_data'
 )
+POSTGRES_HOST = os.getenv('POSTGRES_HOST', 'localhost')
+POSTGRES_PORT = os.getenv('POSTGRES_PORT', '5432')
+POSTGRES_DB = os.getenv('POSTGRES_DB', 'financial_data')
 
 # Neo4j
 NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
@@ -83,6 +87,9 @@ FMP_BASE_URL = 'https://financialmodelingprep.com/api/v3'
 
 # OpenAI
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
+# Tavily (for DAG 00 connection test)
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '')
 
 # API Timeouts
 API_TIMEOUT_SECONDS = 30
