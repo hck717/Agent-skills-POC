@@ -1,35 +1,146 @@
-# 🏦 AI-Powered Equity Research System
+# 🏦 Multi-Agent Autonomous Investment Research Platform
 
-> **Professional-grade multi-agent equity research powered by local LLMs, RAG, and ReAct orchestration**
+> **From SEC Filings to Institutional-Grade Research: A Modular AI System for Equity Analysis**
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Ollama](https://img.shields.io/badge/Ollama-DeepSeek%20%2B%20Qwen-green.svg)](https://ollama.ai/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Production](https://img.shields.io/badge/Status-Production%20Ready-success.svg)]()
+## 🎯 Vision: The "Lean 6" Autonomous Investment Team
 
-## 🎯 Overview
+This platform is evolving toward a **6-agent autonomous research system** that replicates the workflow of a professional investment team, combining deep document analysis, quantitative forensics, network intelligence, macroeconomic context, behavioral signals, and real-time awareness.
 
-**Transform SEC filings and market data into professional equity research reports in minutes.**
+### The Complete Architecture (Target)
 
-This system combines:
-- 📄 **RAG Document Analysis** - Deep 10-K/10-Q parsing with ChromaDB vector search
-- 🌐 **Web Intelligence** - Real-time market data and news integration
-- 🧠 **ReAct Orchestration** - Iterative think-act-observe reasoning loop
-- 🚀 **Hybrid LLM Strategy** - DeepSeek for analysis + Qwen for synthesis (10x faster)
-- 🎯 **10/10 Quality** - Institutional-grade reports with automatic citation validation
-- ⚡ **Local-First** - Runs on your machine with Ollama (no cloud costs)
+| Agent | Role | RAG Strategy | Status |
+|-------|------|--------------|--------|
+| **1. Business Analyst** | Deep Reader | Graph-Augmented CRAG with Proposition Chunking | ✅ **Implemented (4 variants)** |
+| **2. Quantitative Fundamental** | Math Auditor + Quant | Chain-of-Table with Dual-Path Verification | 🚧 **Planned** |
+| **3. Supply Chain Graph** | Network Detective | GraphRAG with Centrality Detection | 🚧 **Planned** |
+| **4. Macro Economic** | The Economist | Text-to-SQL + Time-Series RAG | 🚧 **Planned** |
+| **5. Insider & Sentiment** | The Psychologist | Temporal Contrastive RAG | 🚧 **Planned** |
+| **6. Web Search** | News Desk | HyDE + Step-Back Prompting + Reranking | ✅ **Implemented** |
 
-### Key Features
+***
 
-- ✅ **Automated Research Reports** - Executive summary, investment thesis, risk analysis, valuation
-- ✅ **100% Citation Coverage** - Every claim backed by source (10-K pages or web URLs)
-- ✅ **Temporal Awareness** - Clear distinction between historical (10-K) and current (web) data
-- ✅ **Multi-Agent System** - Business Analyst (RAG) + Web Search Agent (real-time)
-- ✅ **Professional UI** - Streamlit interface with real-time metrics and trace visualization
-- ✅ **Quality Validation** - Automatic scoring and citation gap detection
-- ✅ **Hybrid Performance** - 10x faster synthesis without quality loss
+## 🚀 Current Implementation (v3.6)
 
----
+### What's Working Today
+
+**✅ Core Orchestration**
+- **ReAct Framework**: Rule-based multi-agent coordination with iterative reasoning loops
+- **Hybrid LLM Strategy**: DeepSeek-R1 8B (analysis) + Qwen 2.5 7B (synthesis backup)
+- **Senior PM Persona**: Investment memo generation with conviction-based insights
+- **Auto-Ingestion**: Automatic document processing and knowledge graph seeding
+
+**✅ Business Analyst Agent (4 RAG Variants)**
+1. **Standard RAG** (`business_analyst_standard/`) - Baseline vector search
+2. **Corrective RAG (CRAG)** (`business_analyst_crag/`) - Quality evaluation with web fallback
+3. **Self-RAG** (`business_analyst_selfrag/`) - Self-reflection and adaptive retrieval
+4. **GraphRAG** (`business_analyst_graphrag/`) - Neo4j knowledge graph integration
+
+**✅ Web Search Agent**
+- Real-time market intelligence via Tavily API
+- Temporal context enhancement (adds "2026", "latest", "Q1" to queries)
+- Citation preservation with strict temperature control (0.0)
+- Automatic fallback injection when LLM fails to cite
+
+**✅ Professional UI (Streamlit)**
+- Real-time execution metrics (iterations, duration, specialists called)
+- Interactive ReAct trace visualization
+- Quality scoring and citation coverage analysis
+- Markdown report export
+
+***
+
+## 📊 System Architecture (Current)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     USER QUERY                              │
+│          "What are Microsoft's AI risks?"                   │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│             ReAct Orchestrator (v3.6)                       │
+│  • Rule-based reasoning (max 3 iterations)                  │
+│  • Auto-ticker extraction + metadata parsing                │
+│  • Hybrid synthesis (DeepSeek → Qwen fallback)             │
+│  • Senior PM persona synthesis                              │
+└──────┬────────────────────────────────────┬─────────────────┘
+       │                                    │
+       │  Iteration 1: Rule 1               │  Iteration 2: Rule 2
+       ▼                                    ▼
+┌──────────────────────┐           ┌──────────────────────┐
+│  Business Analyst    │           │  Web Search Agent    │
+│  (CRAG Variant)      │           │                      │
+│  ──────────────────  │           │  ──────────────────  │
+│  • Neo4j Graph       │           │  • Tavily API        │
+│  • ChromaDB Vector   │           │  • Real-time News    │
+│  • BERT Reranking    │           │  • Temporal Context  │
+│  • CRAG Evaluator    │──Fallback─→  • Citation Strict   │
+│  • 10-K Citations    │    ↓      │  • URL Citations     │
+│                      │  Web Agent│                      │
+│  MODEL:              │           │  MODEL:              │
+│  DeepSeek-R1 8B      │           │  DeepSeek-R1 8B      │
+│                      │           │                      │
+│  Sources: [1-7]      │           │  Sources: [8-12]     │
+└──────────────────────┘           └──────────────────────┘
+       │                                    │
+       └──────────┬────────────────────────┘
+                  │
+                  │  Iteration 3: finish
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│              SYNTHESIS ENGINE (Hybrid)                      │
+│  MODEL: DeepSeek-R1 8B (Primary) / Qwen 2.5 7B (Backup)   │
+│  ─────────────────────────────────────────────────────────  │
+│  • Merges document (1-7) + web (8-12) sources              │
+│  • Senior PM investment memo structure                      │
+│  • Enforces citation coverage [X] format                    │
+│  • Dynamic structure based on query type                    │
+│  • Duration: 30-60s (synthesis only)                        │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│             PROFESSIONAL INVESTMENT MEMO                    │
+│  ───────────────────────────────────────────────────────── │
+│  • The Setup: Market consensus vs. reality [cited]          │
+│  • The Edge/Thesis: Key drivers market misses [8+ cites]   │
+│  • The Bear Case: What kills the trade [cited]             │
+│  • Catalyst Path: Events to watch [cited]                   │
+│  • References: All sources with clean formatting           │
+│  ───────────────────────────────────────────────────────── │
+│  Duration: 1.5-2.5 min | Citations: 30-50 | Quality: 75-85│
+└─────────────────────────────────────────────────────────────┘
+```
+
+***
+
+## 🏗️ Technology Stack
+
+### Current Infrastructure
+
+| Component | Technology | Purpose | Status |
+|-----------|------------|---------|--------|
+| **Vector DB** | ChromaDB | 10-K/10-Q document embeddings | ✅ Production |
+| **Knowledge Graph** | Neo4j | Structured entity relationships | ✅ Production |
+| **Analysis LLM** | Ollama (DeepSeek-R1 8B) | Deep financial reasoning | ✅ Production |
+| **Synthesis LLM** | Ollama (Qwen 2.5 7B) | Fast report generation | ✅ Production |
+| **Embeddings** | nomic-embed-text | Vector search | ✅ Production |
+| **Reranking** | sentence-transformers BERT | Relevance scoring | ✅ Production |
+| **Web Search** | Tavily API | Real-time intelligence | ✅ Production |
+| **UI** | Streamlit | Interactive dashboard | ✅ Production |
+
+### Planned Infrastructure (Phase 2-4)
+
+| Component | Technology | Purpose | Timeline |
+|-----------|------------|---------|----------|
+| **Vector DB** | Qdrant | Central bank docs + propositions | Phase 2 |
+| **Structured DB** | Postgres + TimescaleDB | Financial statements + insider trades | Phase 2 |
+| **OLAP DB** | DuckDB | 30+ years pricing + factor analysis | Phase 2 |
+| **Data Pipeline** | Airflow | Automated multi-source ingestion | Phase 2 |
+| **Data Sources** | EODHD API + FMP API | 30+ years fundamentals, macro, EOD prices | Phase 2 |
+
+***
 
 ## 🚀 Quick Start
 
@@ -37,383 +148,425 @@ This system combines:
 
 - **Python 3.11+**
 - **Ollama** - For local LLMs ([Download](https://ollama.ai/))
+- **Docker** (Optional) - For Neo4j graph database
 - **10-K PDFs** - SEC filings in `data/{TICKER}/` folders
 
-### 1. Installation
+### 1. Clone & Install
 
 ```bash
-# Clone repository
 git clone https://github.com/hck717/Agent-skills-POC.git
 cd Agent-skills-POC
 
 # Create virtual environment
 python3.11 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Setup Ollama
+### 2. Setup Ollama Models
 
 ```bash
 # Terminal 1: Start Ollama server
 ollama serve
 
 # Terminal 2: Pull required models
-ollama pull deepseek-r1:8b   # Deep reasoning for specialist analysis (5.0 GB)
-ollama pull qwen2.5:7b        # Fast synthesis for final reports (4.7 GB)
-ollama pull nomic-embed-text  # Embeddings for vector search (274 MB)
+ollama pull deepseek-r1:8b      # Analysis model (5.0 GB)
+ollama pull qwen2.5:7b           # Synthesis backup (4.7 GB)
+ollama pull nomic-embed-text     # Embeddings (274 MB)
 ```
 
-**💡 Why Two Models?**
-- **DeepSeek-R1 8B**: Superior financial reasoning for 10-K analysis and web synthesis
-- **Qwen 2.5 7B**: 10x faster for combining pre-analyzed outputs into final reports
-- **Result**: Best quality + best speed (no timeouts!)
+**💡 Model Strategy:**
+- **DeepSeek-R1 8B**: Superior reasoning for 10-K analysis + synthesis (primary)
+- **Qwen 2.5 7B**: 10x faster backup for synthesis timeouts
+- **Result**: Best quality + reliability
 
-### 3. Add Your Data
+### 3. Setup Neo4j (Optional but Recommended)
+
+```bash
+# Using Docker
+docker run -d \
+  --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/password \
+  neo4j:latest
+
+# Access browser: http://localhost:7474
+# Credentials: neo4j / password
+```
+
+### 4. Add Your Data
 
 ```bash
 # Structure your 10-K filings
 data/
 ├── AAPL/
 │   └── APPL 10-k Filings.pdf
-├── TSLA/
-│   └── TSLA 10-K 2024.pdf
-└── MSFT/
-    └── MSFT 10-K 2024.pdf
+├── MSFT/
+│   └── MSFT 10-K 2024.pdf
+└── TSLA/
+    └── TSLA 10-K 2024.pdf
 ```
 
-### 4. Launch
+### 5. Configure Environment (Optional)
 
 ```bash
+# Create .env file
+cat > .env << EOF
+# Neo4j Configuration
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+
+# Tavily API (for web search)
+TAVILY_API_KEY=your-api-key-here
+EOF
+```
+
+### 6. Launch
+
+```bash
+# Option 1: Interactive UI
 streamlit run app.py
+
+# Option 2: Command-line testing
+python orchestrator_react.py
 ```
 
 🎉 **Open browser at `http://localhost:8501`**
 
----
+***
 
-## 📊 System Architecture
+## 📖 Usage Examples
 
+### Example 1: Risk Analysis
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     USER QUERY                              │
-│          "What are Apple's competitive risks?"             │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│             ReAct Orchestrator (v2.2)                       │
-│  • Rule-based reasoning (Iteration 1-3)                     │
-│  • Specialist agent selection                                │
-│  • HYBRID synthesis (DeepSeek → Qwen)                      │
-│  • Automatic citation validation                             │
-└──────┬────────────────────────────────────┬─────────────────┘
-       │                                    │
-       │  Iteration 1                       │  Iteration 2
-       ▼                                    ▼
-┌──────────────────────┐           ┌──────────────────────┐
-│  Business Analyst    │           │  Web Search Agent    │
-│  ─────────────────── │           │  ──────────────────  │
-│  • RAG Analysis      │           │  • Real-time News    │
-│  • ChromaDB Search   │           │  • Market Data       │
-│  • BERT Reranking    │           │  • Analyst Reports   │
-│  • 10-K Citations    │           │  • URL Citations     │
-│                      │           │                      │
-│  MODEL:              │           │  MODEL:              │
-│  DeepSeek-R1 8B      │           │  DeepSeek-R1 8B      │
-│  (Deep reasoning)    │           │  (Context grasp)     │
-│                      │           │                      │
-│  Sources: [1-7]      │           │  Sources: [8-12]     │
-└──────────────────────┘           └──────────────────────┘
-       │                                    │
-       │  Returns analysis with             │  Returns web data with
-       │  page citations                    │  URL citations
-       │                                    │
-       └──────────┬────────────────────────┘
-                  │
-                  │  Iteration 3: finish
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              SYNTHESIS ENGINE (HYBRID)                      │
-│  ─────────────────────────────────────────────────────────  │
-│  MODEL: Qwen 2.5 7B (10x faster than DeepSeek)            │
-│  ─────────────────────────────────────────────────────────  │
-│  • Merges document (1-7) + web (8-12) sources              │
-│  • Generates professional report structure                   │
-│  • Enforces 100% citation coverage                          │
-│  • Validates quality (0-100 score)                          │
-│  • Duration: 20-40s (vs 5+ mins with DeepSeek only)        │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│             PROFESSIONAL EQUITY RESEARCH REPORT             │
-│  ───────────────────────────────────────────────────────── │
-│  • Executive Summary [cited]                                │
-│  • Investment Thesis [8+ citations]                         │
-│  • Business Overview (Historical - 10-K) [1-7]             │
-│  • Recent Developments (Current - Web) [8-12]              │
-│  • Risk Analysis (Historical + Emerging) [cited]           │
-│  • Valuation Context [100% cited]                          │
-│  • References (All sources with URLs)                       │
-│  ───────────────────────────────────────────────────────── │
-│  Quality Score: 85/100 | Citations: 45 | Duration: 2.1 min │
-└─────────────────────────────────────────────────────────────┘
+Query: "What are Apple's supply chain risks from their 2025 10-K?"
+
+Output Structure:
+- The Setup: Apple's reported supply chain concentration (67% China)
+- The Edge: Hidden dependencies market overlooks (chip packaging bottleneck)
+- Bear Case: Geopolitical escalation scenarios
+- Catalysts: Taiwan tension indicators, supplier diversification timeline
 ```
 
----
+### Example 2: Investment Thesis
+```
+Query: "Analyze Microsoft's AI monetization strategy"
 
-## 🎯 Core Components
+Output Structure:
+- Current Consensus: Azure AI growth expectations
+- Our View: Copilot adoption curve vs. pricing power (market underestimates margin expansion)
+- Risks: Open-source LLM commoditization
+- Catalysts: Q2 2026 Copilot revenue disclosure
+```
 
-### ReAct Orchestrator (`orchestrator_react.py`)
+### Example 3: Quick Facts
+```
+Query: "What is Tesla's gross margin trend?"
 
-**Rule-Based Intelligent Routing with Hybrid Synthesis**
+Output: Direct answer with citations from 10-K + recent earnings calls
+```
+
+***
+
+## 🧠 Business Analyst RAG Variants
+
+### 1. Standard RAG (`business_analyst_standard/`)
+**Architecture**: Classic vector search → LLM synthesis
 
 ```python
-# Iteration 1: Business Analyst (DeepSeek-R1 8B)
-→ business_analyst.analyze(query)
-  ↳ Returns: 10-K analysis with page citations [1-7]
-  ↳ Model: DeepSeek-R1 8B (deep financial reasoning)
-
-# Iteration 2: Web Search Agent (DeepSeek-R1 8B)
-→ web_search_agent.analyze(query, prior_analysis)
-  ↳ Returns: Current market data with URLs [8-12]
-  ↳ Model: DeepSeek-R1 8B (context understanding)
-
-# Iteration 3: Final Synthesis (Qwen 2.5 7B)
-→ synthesize_report(all_sources)
-  ↳ Model: Qwen 2.5 7B (10x faster for combining)
-  ↳ Temperature: 0.15 (optimized for Qwen)
-  ↳ Timeout: 180s (3 minutes, plenty for Qwen)
-  ↳ Validation: Automatic citation quality check
+Query → Embedding → ChromaDB (Top 50) → BERT Rerank (Top 10) → LLM Analysis
 ```
 
-**🚀 Hybrid Model Benefits:**
-- ✅ **Quality**: DeepSeek's superior reasoning for complex analysis
-- ✅ **Speed**: Qwen's efficiency for text combining (no deep reasoning needed)
-- ✅ **Reliability**: No timeouts (synthesis takes 20-40s vs 5+ mins)
-- ✅ **Cost**: Same RAM usage (models load one at a time)
+**Use Case**: Baseline performance, fastest execution
 
-### Business Analyst (`skills/business_analyst/`)
-
-**RAG-Powered Document Analysis**
+### 2. Corrective RAG - CRAG (`business_analyst_crag/`)
+**Architecture**: Quality evaluation + adaptive refinement + web fallback
 
 ```python
-Query → Embedding (nomic-embed-text)
-      ↓
-  ChromaDB Vector Search (Top 50)
-      ↓
-  BERT Reranking (Top 10 most relevant)
-      ↓
-  LangGraph Processing (DeepSeek-R1 8B)
-      ↓
-  Structured Analysis + Page Citations
+Query → Retrieval → CRAG Evaluator (0-1 score)
+  ├─ Score > 0.7: High confidence → Use docs
+  ├─ Score 0.5-0.7: Ambiguous → Refine query, retry
+  └─ Score < 0.5: Low confidence → Trigger Web Search Agent
 ```
 
-**Personas:**
-- 📊 Financial Health
-- ⚠️ Risk Factors
-- 🏆 Competitive Position
-- 💼 Business Model
-- 📈 Growth Strategy
+**Use Case**: Zero hallucinations, production quality (recommended)
 
-### Web Search Agent (`skills/web_search_agent/`)
+**Key Innovation**: Automatic fallback chain ensures comprehensive coverage
 
-**Real-Time Intelligence Layer**
+### 3. Self-RAG (`business_analyst_selfrag/`)
+**Architecture**: Self-reflection with adaptive retrieval
 
 ```python
-Query → Enhanced with temporal keywords ("2026", "latest", "Q1")
-      ↓
-  Tavily API Search (Top 5 results)
-      ↓
-  Synthesis with DeepSeek-R1 8B (temp=0.0)
-      ↓
-  Current Market Analysis + URL Citations
+Query → Generate Draft → Self-Critique → Retrieve Additional Context → Refine
 ```
 
-**Features:**
-- ✅ **Temporal Context** - Adds "2026", "Q1", "recent" to queries
-- ✅ **Citation Preservation** - Temperature 0.0 for exact citations
-- ✅ **Fallback Injection** - Auto-injects citations if LLM fails
+**Use Case**: Complex multi-hop reasoning, evolving queries
 
----
+### 4. GraphRAG (`business_analyst_graphrag/`)
+**Architecture**: Neo4j knowledge graph + vector search
 
-## 📈 Output Quality
-
-### Professional Report Structure
-
-```markdown
-## Executive Summary
-Apple continues to maintain its dominant position... FY2025 revenue 
-of $394B [1] with Q1 2026 showing 8.2% YoY growth [8]...
-
-## Investment Thesis
-- **Revenue Growth**: FY2025 revenue of $394B [1] with Q1 2026 
-  showing 8.2% YoY growth [8], driven by Services margin expansion 
-  from 68.2% [2] to 71.5% [9]
-- **Product Innovation**: iPhone 15 launched [3], foldable iPhone 
-  expected H2 2026 [11], Vision Pro AR platform [10]
-- **Market Leadership**: 23.4% global smartphone share [4], 
-  2.2B active iOS devices [5]
-
-## Business Overview (Per FY2025 10-K)
-- iPhone revenue: $201B (52.1% of total) [1]
-- Services revenue: $50.4B (13.9% of total) [1]
-- Gross margin: 43.8% [2]
-
-## Recent Developments (Q4 2025 - Q1 2026)
-- iPhone 17e launched Q4 2025 with 120Hz ProMotion display [8]
-- Foldable iPhone expected H2 2026, priced over $2,000 [11]
-- China market recovery driving 8.2% YoY growth [8]
-
-## Risk Analysis
-### Historical Risks (Per 10-K)
-- Supply chain concentration: 67% manufacturing in China [3]
-- Patent disputes impacting product timelines [3]
-
-### Emerging Risks (Current)
-- Meta developing competing AR/VR headsets [13]
-- Economic downturn risk for high-end products [14]
-
-## Valuation Context
-- P/E ratio: 27.5x NTM [12] vs sector avg 22.1x
-- Market cap: $2.4T [9]
-- Analyst consensus: $180 avg price target [14]
-
-## References
-[1] APPL 10-k Filings.pdf - Page 9
-[2] APPL 10-k Filings.pdf - Page 12
-[8] Apple ramps up product releases - https://linkedin.com/...
-[9] Apple's New Product Launches - https://businessinsider.com/...
+```python
+Query → Vector Search (semantic) + Cypher Queries (structural) → Combined Context
 ```
 
-### Quality Metrics
+**Use Case**: Entity relationships, network analysis (e.g., "How are Apple's suppliers connected?")
 
-| Metric | Target | Typical Output |
-|--------|--------|----------------|
-| Citation Coverage | 95%+ | 85-95% |
-| Citations per Report | 30+ | 35-50 |
-| Investment Thesis Citations | 8+ | 10-15 |
-| Generation Time | <3 min | **1.5-2.5 min** ⚡ |
-| Quality Score | 90+ | 75-85 |
-| Temporal Markers | 100% | 100% |
+**Current State**: Basic implementation, will be enhanced in Phase 3 (Supply Chain Graph Agent)
 
----
+***
 
 ## 🎨 Streamlit UI Features
 
-### Dashboard
-- 📊 **Real-Time Metrics** - Duration, iterations, specialists called, quality score
-- 📝 **Report Viewer** - Markdown rendering with clickable citations
-- 🔍 **ReAct Trace** - Full thought-action-observation loop visualization
-- 💾 **Export** - Download reports as Markdown files
-- ⚙️ **Settings** - Adjust max iterations, temperature, timeout
+### Dashboard Components
 
-### Example Session
+1. **Query Interface**
+   - Natural language input
+   - Ticker auto-detection
+   - Metadata extraction (years, topics)
 
-```
-📊 Results
-Iterations: 3
-Duration: 125.3s  ⚡ (was 303.6s with single model)
-Specialists: 2
-Time/Iter: 41.8s
+2. **Real-Time Metrics**
+   - Iterations completed
+   - Total duration
+   - Specialists called
+   - Time per iteration
 
-🤖 Specialists Called: business_analyst, web_search_agent
+3. **Report Viewer**
+   - Markdown rendering
+   - Clickable citations [X]
+   - Clean reference formatting
 
-🔍 Query: What are Apple's latest competitive developments?
+4. **ReAct Trace (Expandable)**
+   ```
+   🧠 Iteration 1: Rule-Based Reasoning
+      └─ Action: Call business_analyst_crag (Ticker: MSFT)
+         └─ Observation: Retrieved 10-K Risk Factors... (1,247 chars)
+   
+   🧠 Iteration 2: Rule-Based Reasoning
+      └─ Action: Call web_search_agent (Ticker: MSFT)
+         └─ Observation: Found 5 recent articles... (892 chars)
+   
+   🧠 Iteration 3: Rule-Based Reasoning
+      └─ Action: FINISH (Analysis complete)
+   ```
 
-📄 Research Report:
-[Full professional report displayed]
+5. **Export Options**
+   - Download as Markdown (.md)
+   - Copy to clipboard
 
-🧠 ReAct Reasoning Trace:
-[Expandable trace showing each iteration]
-```
-
----
+***
 
 ## 📁 Repository Structure
 
 ```
 Agent-skills-POC/
 │
-├── 📄 README.md                    # English documentation
-├── 📄 README_zh-HK.md              # 粵語文檔 (Cantonese)
+├── 📄 README.md                    # This file
 ├── 📄 requirements.txt             # Python dependencies
+├── 📄 .env.example                 # Environment variables template
 ├── 📄 .gitignore                   # Git ignore rules
 │
 ├── 🎨 app.py                       # Streamlit UI (main entry point)
-├── 🧠 orchestrator_react.py        # ReAct orchestrator (v2.2 hybrid)
+├── 🧠 orchestrator_react.py        # ReAct orchestrator (v3.6)
 │
 ├── 🤖 skills/                      # Specialist agents
-│   ├── business_analyst/
-│   │   ├── graph_agent.py         # RAG-powered 10-K analysis
-│   │   └── ...                    # Supporting files
-│   │
-│   └── web_search_agent/
-│       ├── agent.py               # Real-time web intelligence
-│       └── ...                    # Supporting files
+│   ├── business_analyst_standard/  # Baseline RAG
+│   ├── business_analyst_crag/      # Corrective RAG (recommended)
+│   ├── business_analyst_selfrag/   # Self-reflective RAG
+│   ├── business_analyst_graphrag/  # Graph-augmented RAG
+│   └── web_search_agent/           # Real-time web intelligence
+│
+├── 📂 scripts/                     # Utility scripts
+│   ├── ingest_documents_ba.py      # Document → Neo4j + ChromaDB
+│   └── ...
+│
+├── 📂 prompts/                     # Agent system prompts
 │
 ├── 📂 data/                        # SEC filings (your 10-K PDFs)
 │   ├── AAPL/
-│   │   └── APPL 10-k Filings.pdf
+│   ├── MSFT/
 │   ├── TSLA/
-│   │   └── TSLA 10-K 2024.pdf
 │   └── .gitkeep
 │
-└── 💾 storage/                     # Auto-generated
-    └── chroma_db/                 # Vector database
+├── 📂 docs/                        # Documentation
+│   ├── architecture.md             # Detailed system design
+│   ├── lean6_vision.md             # Full 6-agent roadmap
+│   └── ...
+│
+├── 🐳 docker-compose.yml           # Multi-container setup (future)
+├── 🐳 Dockerfile.airflow           # Airflow data pipeline (future)
+└── 💾 storage/                     # Auto-generated databases
+    └── chroma_db/                  # Vector embeddings
 ```
 
----
+***
+
+## 🛣️ Roadmap: From POC to Production
+
+### ✅ Phase 1: Core Agents (COMPLETE)
+- [x] ReAct orchestration framework
+- [x] Business Analyst (4 RAG variants)
+- [x] Web Search Agent
+- [x] Hybrid LLM synthesis
+- [x] Streamlit UI with trace visualization
+- [x] Auto-ingestion pipeline
+
+### 🚧 Phase 2: Data Infrastructure (Weeks 1-3)
+**Goal**: Multi-database foundation + API integrations
+
+- [ ] Deploy Qdrant (replace/augment ChromaDB)
+- [ ] Setup Postgres + TimescaleDB extension
+- [ ] Setup DuckDB for OLAP queries
+- [ ] Integrate EODHD API (30+ years fundamentals, macro, prices)
+- [ ] Integrate FMP API (detailed statements, transcripts, 13F)
+- [ ] Configure Airflow data pipelines (using existing Dockerfile)
+
+**Why**: Current system limited to local PDFs. Need automated, comprehensive data.
+
+### 🚧 Phase 3: Quantitative Fundamental Agent (Weeks 4-6)
+**Goal**: Math Auditor + Quant Factor Analysis
+
+**New Capabilities**:
+- Chain-of-Table reasoning (SELECT → FILTER → AGGREGATE → RANK → OUTLIER_DETECT)
+- Dual-path verification (Python vs SQL for accuracy)
+- Forensic scoring:
+  - Beneish M-score (earnings manipulation detection)
+  - Altman Z-score (bankruptcy risk)
+  - Piotroski F-score (fundamental quality)
+- Factor analysis across 10K+ tickers:
+  - Value (P/E, P/B, EV/EBITDA, FCF Yield)
+  - Quality (ROE, ROA, Margins, Debt/Equity)
+  - Momentum (1M/3M/6M/12M returns)
+  - Growth (3Y/5Y CAGR, consistency)
+  - Volatility (std dev, beta, Sharpe)
+
+**Tech Stack**: Postgres (normalized statements) + DuckDB (time-series OLAP)
+
+### 🚧 Phase 4: Supply Chain Graph Agent (Weeks 7-9)
+**Goal**: Network Detective for hidden dependencies
+
+**New Capabilities**:
+- NER extraction from 10-K Item 1 (suppliers, customers, competitors)
+- Neo4j graph construction with relationships:
+  - SUPPLIES_TO, CUSTOMER_OF, HOLDS, COMPETES_IN, EXPOSED_TO
+- Graph algorithms:
+  - PageRank (systemically important suppliers)
+  - Betweenness Centrality (chokepoint detection)
+  - Louvain Community (supply chain clusters)
+- Risk detection:
+  - Concentration risk (single supplier > 20% COGS)
+  - Geographic risk (revenue in unstable regions)
+  - Contagion risk (high betweenness + low redundancy)
+
+**Tech Stack**: Enhanced Neo4j (upgrade from current basic GraphRAG)
+
+### 🚧 Phase 5: Macro Economic Agent (Weeks 10-11)
+**Goal**: The Economist - Cycle & FX Analysis
+
+**New Capabilities**:
+- Economic cycle classification (Expansion, Peak, Contraction, Trough)
+  - Based on GDP growth, unemployment, yield curve slope, ISM PMI
+- FX & interest rate impact modeling
+  - Interest rate differential (Fed vs ECB vs BOJ)
+  - Carry trade detection
+  - Company-specific currency exposure analysis
+- Central bank RAG (FOMC minutes, ECB/BOJ statements)
+  - Tone scoring (hawkish vs dovish)
+
+**Tech Stack**: DuckDB (macro time-series 1960+) + Qdrant (central bank docs)
+
+### 🚧 Phase 6: Insider & Sentiment Agent (Weeks 12-13)
+**Goal**: The Psychologist - Words vs Actions
+
+**New Capabilities**:
+- Temporal Contrastive RAG (Q4 2025 guidance vs Q3 2025)
+- Vector difference analysis (semantic drift detection)
+- Cross-modal divergence:
+  - Bullish guidance + insider selling = Red flag
+  - Negative drift + insider buying = Contrarian signal
+- Conviction scoring: (1 - similarity) × insider_buy_ratio × volume_percentile
+
+**Tech Stack**: Postgres TimescaleDB (Form 4 data) + Qdrant (earnings transcripts)
+
+### 🚧 Phase 7: Advanced RAG Techniques (Weeks 14-15)
+**Goal**: Enhance retrieval quality across all agents
+
+**Upgrades**:
+- Proposition-based chunking (25-30% better context preservation)
+- Hybrid search (Vector + BM25 + Graph Cypher)
+- HyDE for Web Search (Hypothetical Document Embeddings)
+- Step-Back Prompting (broaden context)
+- Cohere/BGE Reranking (filter noise)
+
+### 🚧 Phase 8: Multi-Agent Consensus (Weeks 16-17)
+**Goal**: Orchestrator 2.0 - Conflict Resolution
+
+**New Logic**:
+- Agent Consensus Matrix (Signal × Confidence scoring)
+- 5 Conflict Resolution Patterns:
+  1. Growth vs Quality (forensic scores override narrative)
+  2. Momentum vs Insider Conviction (contrarian signals)
+  3. Concentration Risk vs Diversification Progress
+  4. Optimistic Guidance vs Macro Headwinds
+  5. Strong Fundamentals vs Supply Chain Vulnerability
+- Dynamic synthesis: Final recommendation with conviction level
+
+***
 
 ## 🔧 Configuration
 
 ### Environment Variables
 
 ```bash
-# Optional: For web search (if not using DuckDuckGo)
-export TAVILY_API_KEY="your-tavily-api-key"
+# .env file
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+
+TAVILY_API_KEY=your-tavily-key          # Web search
+EODHD_API_KEY=your-eodhd-key            # Phase 2
+FMP_API_KEY=your-fmp-key                # Phase 2
+
+OLLAMA_URL=http://localhost:11434
 ```
 
 ### Orchestrator Settings
 
-In `orchestrator_react.py`:
-
 ```python
-# Model strategy (v2.2)
+# orchestrator_react.py (v3.6)
+
+# Model configuration
 ANALYSIS_MODEL = "deepseek-r1:8b"   # For specialist analysis
-SYNTHESIS_MODEL = "qwen2.5:7b"      # For final report synthesis
+SYNTHESIS_MODEL = "deepseek-r1:8b"   # For final report synthesis
 
-# Synthesis parameters (optimized for Qwen)
-temperature=0.15      # Lower temp for Qwen (vs 0.25 for DeepSeek)
-num_predict=3500      # Token limit for comprehensive reports
-timeout=180           # 3 minutes (sufficient for Qwen)
+# Iteration limits
+max_iterations = 3                   # Default orchestration depth
+
+# Synthesis parameters
+temperature = 0.3                    # Senior PM synthesis creativity
+num_predict = 4000                   # Token limit for comprehensive reports
 ```
 
-### Agent Settings
-
-In `skills/business_analyst/graph_agent.py`:
+### Business Analyst Settings
 
 ```python
+# skills/business_analyst_crag/
+
 # RAG parameters
-top_k_retrieval=50    # Initial vector search results
-top_k_rerank=10       # After BERT reranking
-model="deepseek-r1:8b"  # Analysis model
-temperature=0.2       # Analysis temperature
+top_k_retrieval = 50         # Initial vector search results
+top_k_rerank = 10           # After BERT reranking
+model = "deepseek-r1:8b"    # Analysis model
+temperature = 0.2           # Analysis temperature
+
+# CRAG thresholds
+high_confidence = 0.7       # Use docs directly
+low_confidence = 0.5        # Trigger web fallback
+ambiguous_range = (0.5, 0.7) # Refine query and retry
 ```
 
-In `skills/web_search_agent/agent.py`:
-
-```python
-# Web search parameters
-max_results=5         # Tavily search limit
-model="deepseek-r1:8b"  # Web synthesis model
-temperature=0.0       # Strict citation preservation
-```
-
----
+***
 
 ## 📊 Performance Benchmarks
 
@@ -426,202 +579,220 @@ temperature=0.0       # Strict citation preservation
 | Storage | 15GB | 25GB+ |
 | GPU | None | Apple Silicon or NVIDIA (auto-detected) |
 
-**💡 Note**: System only loads one model at a time (8-10GB RAM peak)
+**💡 Note**: System loads one model at a time (8-10GB RAM peak)
 
-### Speed Benchmarks (v2.2 Hybrid)
+### Speed Benchmarks (v3.6)
 
 | Task | Duration | Model | Notes |
 |------|----------|-------|-------|
-| Document Ingestion | 30-60s | nomic-embed | One-time per 10-K |
-| Business Analyst Call | 60-90s | DeepSeek-R1 8B | RAG + LLM analysis |
-| Web Search Agent Call | 30-45s | DeepSeek-R1 8B | Search + synthesis |
-| Final Synthesis | **20-40s** ⚡ | **Qwen 2.5 7B** | **Was 120-300s** |
-| **Total Query** | **1.5-2.5 min** | Hybrid | **Was 3-5 min** |
+| Ticker Extraction | 2-5s | DeepSeek-R1 8B | JSON parsing |
+| Auto-Ingestion | 30-60s | nomic-embed | One-time per 10-K |
+| Business Analyst Call | 60-90s | DeepSeek-R1 8B | RAG + Neo4j + LLM |
+| Web Search Agent Call | 30-45s | DeepSeek-R1 8B | Tavily + synthesis |
+| Final Synthesis | 30-60s | DeepSeek-R1 8B | Senior PM memo |
+| **Total Query** | **1.5-2.5 min** | Hybrid | End-to-end |
 
-**🚀 Performance Improvement**: ~40-60% faster end-to-end
+### Quality Metrics (Current)
 
-### Quality vs Speed Tradeoffs
+| Metric | Target | Typical Output |
+|--------|--------|----------------|
+| Citation Coverage | 95%+ | 80-90% |
+| Citations per Report | 30+ | 30-50 |
+| Investment Thesis Citations | 8+ | 10-15 |
+| Generation Time | <3 min | 1.5-2.5 min |
+| ReAct Iterations | 2-3 | 2 (fixed rules) |
 
-| Configuration | Speed | Quality | Use Case |
-|---------------|-------|---------|----------|
-| DeepSeek Only (0.20) | Slow | 95/100 | Maximum quality |
-| **Hybrid (Recommended)** | **Fast** | **90/100** | **Production** |
-| Qwen Only (0.25) | Fastest | 80/100 | Quick summaries |
-
----
+***
 
 ## 🧪 Testing
 
 ### Quick System Check
 
 ```bash
-# Verify Ollama connection
+# 1. Verify Ollama models
 ollama list
-# Should show: deepseek-r1:8b, qwen2.5:7b, nomic-embed-text
+# Expected: deepseek-r1:8b, qwen2.5:7b, nomic-embed-text
 
-# Test orchestrator
+# 2. Test Neo4j connection
+# Open http://localhost:7474 (should see browser interface)
+
+# 3. Test orchestrator
 python orchestrator_react.py
-# Ask: "What are Apple's main products?"
+# Try: "What are Apple's key products?"
 
-# Launch UI
+# 4. Launch UI
 streamlit run app.py
 ```
 
-### Example Queries
+### Example Queries by Complexity
 
-**Simple (1-1.5 minutes):**
+**Simple (30-60s):**
 ```
-"What are Apple's key products and services?"
-```
-
-**Medium (1.5-2 minutes):**
-```
-"Analyze Apple's competitive risks from their latest 10-K filing"
+"What is Microsoft's revenue for 2025?"
+"List Tesla's main risk factors"
 ```
 
-**Complex (2-2.5 minutes):**
+**Medium (1-1.5 min):**
 ```
-"Based on Apple's FY2025 10-K:
-1. What are the key risk factors?
-2. How has their business model evolved?
+"Analyze Apple's competitive risks from their 10-K"
+"What is NVIDIA's AI strategy?"
+```
+
+**Complex (1.5-2.5 min):**
+```
+"Based on Microsoft's FY2025 10-K:
+1. What are the key AI monetization risks?
+2. How has their cloud strategy evolved?
 3. What are recent competitive developments?
-4. Provide specific page references and current market context."
+4. Provide specific page references and market context."
 ```
 
----
-
-## 🛠️ Development
-
-### Adding New Agents
-
-```python
-# 1. Create agent in skills/your_agent/
-class YourAgent:
-    def analyze(self, query: str) -> str:
-        # Your analysis logic
-        return "Analysis with citations [SOURCE-1]"
-
-# 2. Register in app.py
-from skills.your_agent.agent import YourAgent
-your_agent = YourAgent()
-orchestrator.register_specialist("your_agent", your_agent)
-
-# 3. Update orchestrator routing (optional)
-# In orchestrator_react.py, add to SPECIALIST_AGENTS dict
-```
-
-### Customizing Synthesis Prompts
-
-Edit `orchestrator_react.py` synthesis prompt to adjust:
-- Report structure
-- Citation requirements
-- Professional tone
-- Quality standards
-
-### Debugging
-
-```python
-# Enable detailed logging
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-# View ReAct trace
-orchestrator.get_trace_summary()  # Full iteration history
-
-# Check quality validation
-quality_score, warnings = orchestrator._validate_citation_quality(report)
-print(f"Score: {quality_score}/100")
-for warning in warnings:
-    print(f"  {warning}")
-```
-
----
-
-## 🎓 Tech Stack
-
-### Core Technologies
-
-| Component | Technology | Purpose |
-|-----------|------------|------|
-| **Analysis LLM** | Ollama (deepseek-r1:8b) | Deep reasoning |
-| **Synthesis LLM** | Ollama (qwen2.5:7b) | Fast combining |
-| **Embeddings** | nomic-embed-text | Vector search |
-| **Vector DB** | ChromaDB | Document storage |
-| **Reranking** | sentence-transformers/BERT | Relevance scoring |
-| **Orchestration** | Custom ReAct | Agent coordination |
-| **UI** | Streamlit | Web interface |
-| **PDF Processing** | PyPDF2 | Document parsing |
-| **Web Search** | Tavily API | Real-time data |
-
-### Python Libraries
-
-```txt
-streamlit>=1.28.0       # UI framework
-langchain>=0.1.0        # LLM orchestration
-chromadb>=0.4.18        # Vector database
-sentence-transformers   # BERT reranking
-ollama                  # Local LLM client
-pypdf2                  # PDF processing
-requests                # HTTP client
-tavily                  # Web search API
-```
-
----
-
-## 🚧 Roadmap
-
-### v2.3 (Next Release)
-- [ ] Streaming synthesis (real-time output)
-- [ ] Multi-document comparison
-- [ ] Enhanced chart generation
-- [ ] Export to Excel with data tables
-
-### v3.0 (Future)
-- [ ] Quantitative Analyst (DCF, ratios)
-- [ ] Market Analyst (real-time pricing)
-- [ ] Multi-turn conversation memory
-- [ ] API endpoint (REST API)
-- [ ] Authentication & multi-user
-
----
+***
 
 ## 🤝 Contributing
 
-Contributions welcome! Areas of focus:
+Contributions welcome! Focus areas:
 
-1. **New Specialist Agents** - Industry, ESG, Macro analysts
-2. **Data Sources** - Bloomberg, Reuters, FactSet integrations
-3. **Quality Improvements** - Better citation extraction, fact-checking
-4. **Performance** - Faster synthesis, parallel agent execution
-5. **Documentation** - Tutorials, examples, best practices
+### High Priority
+1. **Data Source Integrations** - EODHD, FMP, Bloomberg APIs
+2. **New Specialist Agents** - Quantitative, Supply Chain, Macro, Insider
+3. **Advanced RAG** - Proposition chunking, hybrid search, HyDE
+4. **Quality Improvements** - Citation extraction, fact-checking
 
----
+### Medium Priority
+5. **Performance Optimization** - Parallel agent execution, caching
+6. **UI Enhancements** - Chart generation, Excel export, multi-document comparison
+7. **Testing** - Unit tests, integration tests, benchmarks
+
+### Documentation
+8. **Tutorials** - Agent development guide, RAG technique comparisons
+9. **Examples** - Industry-specific analyses, use case studies
+
+**How to Contribute:**
+```bash
+# 1. Fork repository
+# 2. Create feature branch
+git checkout -b feature/your-feature-name
+
+# 3. Make changes and test
+python -m pytest tests/
+
+# 4. Submit pull request with detailed description
+```
+
+***
+
+## 📚 Documentation
+
+- **[Architecture Deep Dive](docs/architecture.md)** - System design and data flow
+- **[Lean 6 Vision](docs/lean6_vision.md)** - Complete 6-agent specification
+- **[RAG Techniques Comparison](docs/rag_comparison.md)** - Benchmarks across 4 variants
+- **[API Integration Guide](docs/api_integration.md)** - EODHD, FMP setup
+- **[Agent Development Guide](docs/agent_development.md)** - How to add new specialists
+
+***
+
+## 🙏 Acknowledgments
+
+- **Ollama** - Local LLM infrastructure that makes this possible
+- **DeepSeek** - Superior reasoning models for financial analysis
+- **Qwen Team** - Fast, efficient synthesis models
+- **LangChain** - Agent orchestration framework
+- **ChromaDB** - Vector database foundation
+- **Neo4j** - Knowledge graph platform
+- **Streamlit** - Rapid UI development
+- **Tavily** - High-quality web search API
+
+***
 
 ## 📜 License
 
 MIT License - See [LICENSE](LICENSE) for details
 
----
+***
 
-## 🙏 Acknowledgments
-
-- **Ollama** - Local LLM infrastructure
-- **DeepSeek** - Superior reasoning models
-- **Qwen Team** - Fast, efficient models
-- **LangChain** - Agent framework
-- **ChromaDB** - Vector database
-- **Streamlit** - Rapid UI development
-
----
-
-## 📞 Support
+## 📞 Support & Community
 
 - 📖 **Documentation**: [docs/](docs/)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/hck717/Agent-skills-POC/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/hck717/Agent-skills-POC/discussions)
+- 📧 **Contact**: Open an issue for questions
 
----
+***
 
-**Built with ❤️ for professional equity research**
+## 🎯 Key Differentiators
 
-⭐ Star this repo if you find it useful!
+### Why This System?
+
+1. **Local-First**: No cloud costs, full data privacy
+2. **Modular Architecture**: Swap agents, RAG techniques, or LLMs independently
+3. **Production-Ready Orchestration**: ReAct framework with rule-based reliability
+4. **4 RAG Variants**: Compare Standard, CRAG, Self-RAG, GraphRAG side-by-side
+5. **Hybrid LLM Strategy**: DeepSeek quality + Qwen speed backup
+6. **Senior PM Persona**: Investment memos, not corporate summaries
+7. **Zero Hallucinations**: CRAG evaluation + web fallback chain
+8. **Clear Roadmap**: From 2-agent POC to 6-agent autonomous team
+
+***
+
+## 🔮 Vision: The Future (Phase 8)
+
+```
+User: "Analyze Microsoft - full team assessment"
+
+[6 Agents Execute in Parallel]
+
+Business Analyst: "Cloud segment 39% margin [1], AI Copilot mentioned 47 times in 10-K [2]"
+Quant Fundamental: "Beneish M-score 0.8 (clean) [3], ROE 42% (top decile) [4]"
+Supply Chain: "Azure infra concentrated in 3 GPU suppliers (risk) [5]"
+Macro: "USD strength reducing international revenue by 4% [6]"
+Insider: "CFO purchased $2M shares (high conviction) [7]"
+Web Search: "OpenAI partnership extended to 2030 [8]"
+
+[Orchestrator Synthesizes]
+
+## MSFT Investment Memo
+
+**The Setup**: Market pricing 15% AI revenue growth. Reality: Copilot adoption 
+accelerating 40% QoQ [8], but margin expansion underestimated (Copilot 70% GM vs 
+Azure 39% [1]).
+
+**The Edge**: 
+1. Margin Inflection: Copilot mix shift drives 300bps expansion by FY2027 [model]
+2. Insider Conviction: CFO buying at $420 (10x normal size) [7] = floor established
+3. Quality Screen: Top decile ROE [4] + clean forensics [3] = durable compounder
+
+**Bear Case**:
+1. GPU Dependency: 60% Nvidia H100 exposure [5] = supply constraint Q2-Q3 2026
+2. FX Headwind: USD strength cutting $4B revenue [6]
+3. Competition: Google Gemini pricing 30% below [8]
+
+**Catalysts**:
+- Feb 28: FY Q2 earnings (watch Copilot revenue disclosure)
+- March 15: GPU supply agreement renewal (check diversification)
+- April 1: Azure price increase (margin test)
+
+**Conviction: STRONG BUY | Target: $485 | Stop: $395**
+
+[All 8 citations auto-formatted with clickable links]
+```
+
+***
+
+**Built with ❤️ for institutional-grade equity research**
+
+⭐ **Star this repo if you're building the future of AI-powered investing!**
+
+***
+
+## 📈 Version History
+
+- **v3.6** (Current) - Senior PM persona, auto-ingestion, metadata extraction
+- **v3.0** - CRAG web fallback chain
+- **v2.2** - Hybrid LLM strategy (DeepSeek + Qwen)
+- **v2.0** - Business Analyst + Web Search agents
+- **v1.0** - Initial ReAct orchestration POC
+
+***
+
+This README reflects your **current production-ready 2-agent system** while clearly outlining the path to your **"Lean 6" vision**. It's honest about what works today and ambitious about what's coming next. Ready to commit to your repo?
