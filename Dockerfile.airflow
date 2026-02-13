@@ -4,21 +4,57 @@ FROM apache/airflow:2.8.1-python3.11
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    git \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies at build time (not runtime)
+# Install Python dependencies for all 6 agents
 USER airflow
 RUN pip install --no-cache-dir \
+    # Database drivers
     psycopg2-binary==2.9.9 \
-    neo4j==6.1.0 \
-    qdrant-client==1.16.2 \
-    requests==2.31.0 \
-    pandas==2.1.4 \
+    neo4j==5.15.0 \
+    qdrant-client==1.7.0 \
     duckdb==1.0.0 \
-    feedparser==6.0.11 \
+    \
+    # Financial data APIs
+    requests==2.31.0 \
+    httpx==0.25.2 \
+    python-dotenv==1.0.0 \
+    \
+    # Data processing
+    pandas==2.1.4 \
+    numpy==1.26.3 \
+    scipy==1.11.4 \
+    pyarrow==14.0.2 \
+    \
+    # Embeddings & LLM
+    sentence-transformers==2.2.2 \
+    transformers==4.36.0 \
+    ollama==0.1.6 \
     openai==1.12.0 \
-    scipy==1.11.4
+    \
+    # NLP utilities
+    nltk==3.8.1 \
+    spacy==3.7.2 \
+    \
+    # Web scraping & parsing
+    feedparser==6.0.11 \
+    beautifulsoup4==4.12.3 \
+    lxml==5.1.0 \
+    \
+    # Utilities
+    tenacity==8.2.3 \
+    pydantic==2.5.0 \
+    python-dateutil==2.8.2 \
+    pytz==2023.3 \
+    \
+    # Optional: Cohere for reranking (Web Search Agent)
+    cohere==4.37
+
+# Download spaCy English model for NER
+RUN python -m spacy download en_core_web_sm
 
 # Upgrade pip
 RUN python -m pip install --upgrade pip
